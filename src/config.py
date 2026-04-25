@@ -2,6 +2,9 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 OCR_MODEL = "glm-ocr"
 EXTRACTION_MODEL = "llama3.1:8b"
 
+# Число документов, обрабатываемых параллельно
+MAX_WORKERS = 4
+
 FIELDS = [
     "Наименование муниципального образования",
     "Дата разрешения на строительство",

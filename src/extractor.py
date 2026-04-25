@@ -1,4 +1,5 @@
 import sys
+from typing import Callable
 
 from ollama import chat
 
@@ -7,9 +8,11 @@ from .pdf_utils import pdf_to_images_base64
 from .prompt import build_ocr_prompt, build_extraction_system_prompt, build_extraction_user_prompt
 from .json_utils import extract_json
 
+_default_log: Callable[[str], None] = lambda msg: print(msg, file=sys.stderr)
 
-def _ocr_page(image_b64: str, page_num: int) -> str:
-    print(f"  OCR страницы {page_num} ({OCR_MODEL})...", file=sys.stderr)
+
+def _ocr_page(image_b64: str, page_num: int, prefix: str, log: Callable[[str], None]) -> str:
+    log(f"{prefix}  OCR страницы {page_num} ({OCR_MODEL})...")
     response = chat(
         model=OCR_MODEL,
         messages=[
@@ -24,24 +27,21 @@ def _ocr_page(image_b64: str, page_num: int) -> str:
     return response.message.content or ""
 
 
-def extract_fields(pdf_path: str) -> dict:
-    print(f"Конвертация PDF в изображения: {pdf_path}", file=sys.stderr)
+def extract_fields(pdf_path: str, log: Callable[[str], None] = _default_log) -> dict:
+    prefix = f"[{pdf_path}] "
+    log(f"{prefix}Конвертация PDF в изображения...")
     images = pdf_to_images_base64(pdf_path)
 
-    # Этап 1: OCR каждой страницы через glm-ocr
-    print(f"Этап 1: распознавание {len(images)} страниц моделью {OCR_MODEL}...", file=sys.stderr)
+    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {OCR_MODEL}...")
     page_texts = []
     for i, image in enumerate(images, start=1):
-        text = _ocr_page(image, i)
+        text = _ocr_page(image, i, prefix, log)
         page_texts.append(f"=== Страница {i} ===\n{text}")
 
     combined_ocr = "\n\n".join(page_texts)
-    print("--- Результат OCR ---", file=sys.stderr)
-    print(combined_ocr, file=sys.stderr)
-    print("--- Конец OCR ---", file=sys.stderr)
+    log(f"{prefix}--- Результат OCR ---\n{combined_ocr}\n{prefix}--- Конец OCR ---")
 
-    # Этап 2: извлечение полей через llama3.1:8b
-    print(f"Этап 2: извлечение полей моделью {EXTRACTION_MODEL}...", file=sys.stderr)
+    log(f"{prefix}Этап 2: извлечение полей моделью {EXTRACTION_MODEL}...")
     response = chat(
         model=EXTRACTION_MODEL,
         messages=[
@@ -57,12 +57,9 @@ def extract_fields(pdf_path: str) -> dict:
         options={"temperature": 0},
     )
 
-    print("Ответ получен.", file=sys.stderr)
     text = response.message.content or ""
     if not text.strip() and response.message.thinking:
-        print("content пустой, используем thinking как fallback", file=sys.stderr)
+        log(f"{prefix}content пустой, используем thinking как fallback")
         text = response.message.thinking or ""
-    print("--- Сырой ответ модели ---", file=sys.stderr)
-    print(text, file=sys.stderr)
-    print("--- Конец ответа ---", file=sys.stderr)
+    log(f"{prefix}--- Сырой ответ модели ---\n{text}\n{prefix}--- Конец ответа ---")
     return extract_json(text)
