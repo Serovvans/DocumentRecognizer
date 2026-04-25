@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -35,3 +37,22 @@ async def download_results(session_id: str):
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/preview/{session_id}")
+async def preview_results(session_id: str):
+    if not all(c in "0123456789abcdef-" for c in session_id):
+        raise HTTPException(400, "Invalid session id")
+
+    path = OUTPUT_DIR / f"{session_id}.jsonl"
+    if not path.exists():
+        raise HTTPException(404, "Session not found or results not ready")
+
+    records = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+
+    return records

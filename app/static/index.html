@@ -262,12 +262,34 @@
       </div>
 
       <div class="action-bar">
+        <button class="btn btn-secondary btn-large" onclick="previewResults()">Предпросмотр</button>
         <button class="btn btn-primary btn-large" onclick="downloadJSON()">Скачать JSON</button>
         <button class="btn btn-secondary btn-large" onclick="resetApp()">Новая обработка</button>
       </div>
     </section>
 
   </main>
+</div>
+
+<!-- Preview Modal -->
+<div id="preview-modal" class="modal hidden">
+  <div class="modal-backdrop" onclick="closePreview()"></div>
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 class="modal-title">Предпросмотр результатов</h3>
+      <div class="modal-tabs">
+        <button id="tab-table" class="tab-btn active" onclick="switchPreviewTab('table')">Таблица</button>
+        <button id="tab-json"  class="tab-btn"        onclick="switchPreviewTab('json')">JSON</button>
+      </div>
+      <button class="btn-icon modal-close" onclick="closePreview()" title="Закрыть">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="preview-table-wrap" class="preview-pane"></div>
+      <div id="preview-json-wrap"  class="preview-pane hidden">
+        <pre id="preview-json-code" class="json-code"></pre>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Toast container -->

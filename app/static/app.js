@@ -382,6 +382,101 @@ function toast(msg) {
   t._tid = setTimeout(() => t.classList.remove('visible'), 2400);
 }
 
+// ── Preview modal ──────────────────────────────────────────────────
+let _previewData = null;
+
+async function previewResults() {
+  if (!S.sessionId) { toast('Нет данных для предпросмотра'); return; }
+
+  const modal = $('preview-modal');
+  $('preview-table-wrap').innerHTML = '<div class="preview-loading">Загрузка…</div>';
+  $('preview-table-wrap').classList.remove('hidden');
+  $('preview-json-wrap').classList.add('hidden');
+  $('tab-table').classList.add('active');
+  $('tab-json').classList.remove('active');
+  show(modal);
+  document.body.style.overflow = 'hidden';
+
+  try {
+    const res = await fetch(`/api/preview/${S.sessionId}`);
+    if (!res.ok) throw new Error('Ошибка загрузки данных');
+    _previewData = await res.json();
+    renderPreviewTable(_previewData);
+  } catch (e) {
+    $('preview-table-wrap').innerHTML =
+      `<div class="preview-error">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+function closePreview() {
+  hide($('preview-modal'));
+  document.body.style.overflow = '';
+}
+
+function switchPreviewTab(tab) {
+  if (!_previewData) return;
+  const isTable = tab === 'table';
+  $('tab-table').classList.toggle('active', isTable);
+  $('tab-json').classList.toggle('active', !isTable);
+  $('preview-table-wrap').classList.toggle('hidden', isTable ? false : true);
+  $('preview-json-wrap').classList.toggle('hidden', isTable ? true : false);
+  if (!isTable) $('preview-json-code').textContent = JSON.stringify(_previewData, null, 2);
+}
+
+function renderPreviewTable(data) {
+  const fieldNames = [];
+  const seen = new Set();
+  for (const row of data) {
+    if (row.status === 'ok' && row.data) {
+      for (const k of Object.keys(row.data)) {
+        if (!seen.has(k)) { seen.add(k); fieldNames.push(k); }
+      }
+    }
+  }
+
+  const hasNonOk = data.some(r => r.status !== 'ok');
+  const nf = fieldNames.length;
+
+  let html = '<table class="preview-table"><thead><tr>';
+  html += '<th>#</th><th>Файл</th>';
+  for (const f of fieldNames) html += `<th>${esc(f)}</th>`;
+  if (hasNonOk) html += '<th>Статус</th>';
+  html += '</tr></thead><tbody>';
+
+  data.forEach((row, i) => {
+    const fname = (row.file || '').replace(/.*[/\\]/, '');
+    if (row.status === 'ok') {
+      html += `<tr><td class="td-num">${i + 1}</td><td class="td-file">${esc(fname)}</td>`;
+      for (const f of fieldNames) html += `<td>${fmtCell(row.data?.[f])}</td>`;
+      if (hasNonOk) html += '<td><span class="status-ok">✓</span></td>';
+    } else if (row.status === 'error') {
+      html += `<tr class="tr-error"><td class="td-num">${i + 1}</td><td class="td-file">${esc(fname)}</td>`;
+      if (nf > 0) html += `<td colspan="${nf}" class="td-err-msg">${esc(row.error || 'Ошибка')}</td>`;
+      if (hasNonOk) html += '<td><span class="status-err">Ошибка</span></td>';
+    } else {
+      html += `<tr class="tr-rejected"><td class="td-num">${i + 1}</td><td class="td-file">${esc(fname)}</td>`;
+      if (nf > 0) html += `<td colspan="${nf}" class="td-skip-msg">${esc(row.reason || 'Отклонён')}</td>`;
+      if (hasNonOk) html += '<td><span class="status-skip">Отклонён</span></td>';
+    }
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  $('preview-table-wrap').innerHTML = html;
+}
+
+function fmtCell(val) {
+  if (val === null || val === undefined) return '<span class="cell-null">—</span>';
+  if (Array.isArray(val)) {
+    return val.map(v => `<span class="cell-tag">${esc(String(v))}</span>`).join(' ');
+  }
+  return esc(String(val));
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closePreview();
+});
+
 // ── Initialise ─────────────────────────────────────────────────────
 loadPresetsList();
 addField(); // one empty row to start
