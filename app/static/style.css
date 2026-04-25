@@ -219,6 +219,8 @@ input[type=range] {
   display: flex; align-items: center; justify-content: center;
 }
 .hint-text { font-size: 12px; color: var(--text-muted); }
+.checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); margin-top: 10px; cursor: pointer; }
+.checkbox-row input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; accent-color: var(--primary); }
 
 /* ── Toggle switch ───────────────────────────────────── */
 .toggle { position: relative; display: inline-block; width: 44px; height: 24px; }

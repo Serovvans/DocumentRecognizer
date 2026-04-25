@@ -16,10 +16,11 @@ def _qi(name: str) -> str:
 class DBWriter:
     """Thread-safe DB writer that connects via SSH tunnel using psycopg2."""
 
-    def __init__(self, schema: str, table: str, fields: list[str]):
+    def __init__(self, schema: str, table: str, fields: list[str], save_source: bool = True):
         self.schema = schema
         self.table = table
         self.fields = fields  # user-defined field names (keys in extracted JSON)
+        self.save_source = save_source
 
         self._tunnel: SSHTunnelForwarder | None = None
         self._pool: psycopg2.pool.ThreadedConnectionPool | None = None
@@ -75,9 +76,10 @@ class DBWriter:
         conn = self._pool.getconn()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi('source_file')} TEXT"
-                )
+                if self.save_source:
+                    cur.execute(
+                        f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi('source_file')} TEXT"
+                    )
                 for field in self.fields:
                     cur.execute(
                         f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(field)} TEXT"
@@ -89,8 +91,8 @@ class DBWriter:
     # ── write ────────────────────────────────────────────────────────────────
 
     def write(self, source_file: str, data: dict) -> None:
-        all_fields = ["source_file"] + self.fields
-        values: list = [source_file]
+        all_fields = (["source_file"] if self.save_source else []) + self.fields
+        values: list = ([source_file] if self.save_source else [])
         for field in self.fields:
             val = data.get(field)
             if isinstance(val, list):

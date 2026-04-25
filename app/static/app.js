@@ -177,6 +177,7 @@ function startProcessing() {
     db_enabled:            $('db-toggle').checked,
     db_schema:             $('db-schema').value.trim(),
     db_table:              $('db-table').value.trim(),
+    db_save_source:        $('db-save-source').checked,
     classification_prompt: $('filter-toggle').checked
       ? $('filter-prompt').value.trim()
       : '',
@@ -342,7 +343,8 @@ function resetApp() {
   $('scan-result').innerHTML = '';
   $('fields-list').innerHTML = '';
   _fieldCounter = 0;
-  $('db-toggle').checked     = false;
+  $('db-toggle').checked       = false;
+  $('db-save-source').checked  = true;
   hide($('db-config'));
   $('filter-toggle').checked = false;
   $('filter-prompt').value   = '';
