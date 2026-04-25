@@ -107,6 +107,31 @@
         </div>
       </div>
 
+      <!-- Classification filter -->
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+            </svg>
+            Фильтр документов
+          </h2>
+          <label class="toggle">
+            <input type="checkbox" id="filter-toggle" onchange="toggleFilter(this.checked)" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <div id="filter-config" class="hidden">
+          <div class="form-group" style="margin-top:12px">
+            <label class="form-label" for="filter-prompt">Описание нужных документов</label>
+            <textarea id="filter-prompt" class="input" rows="3"
+              placeholder="Например: разрешения на строительство жилых домов в Москве"
+              style="width:100%;resize:vertical;font-family:inherit;font-size:14px;padding:8px 10px"></textarea>
+          </div>
+          <p class="hint-text">Документы, не соответствующие описанию, будут отклонены моделью и не попадут в результаты.</p>
+        </div>
+      </div>
+
       <!-- DB -->
       <div class="card">
         <div class="card-head">
@@ -162,6 +187,10 @@
             <div class="stat-val" id="st-failed">0</div>
             <div class="stat-lbl">Ошибки</div>
           </div>
+          <div class="stat-box warning">
+            <div class="stat-val" id="st-rejected">0</div>
+            <div class="stat-lbl">Отклонено</div>
+          </div>
           <div class="stat-box">
             <div class="stat-val" id="st-speed">—</div>
             <div class="stat-lbl">сек / файл</div>
@@ -200,6 +229,10 @@
           <div class="res-box error">
             <div class="res-num" id="r-failed">0</div>
             <div class="res-lbl">Ошибки</div>
+          </div>
+          <div class="res-box warning">
+            <div class="res-num" id="r-rejected">0</div>
+            <div class="res-lbl">Отклонено</div>
           </div>
           <div class="res-box info">
             <div class="res-num" id="r-rate">0%</div>

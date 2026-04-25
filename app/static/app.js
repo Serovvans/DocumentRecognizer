@@ -155,6 +155,11 @@ function toggleDB(on) {
   if (on) show($('db-config')); else hide($('db-config'));
 }
 
+// ── Filter toggle ──────────────────────────────────────────────────
+function toggleFilter(on) {
+  if (on) show($('filter-config')); else hide($('filter-config'));
+}
+
 // ── Start button guard ─────────────────────────────────────────────
 function checkStartEnabled() {
   $('start-btn').disabled = !(S.files.length > 0 && getFields().length > 0);
@@ -166,21 +171,25 @@ function startProcessing() {
   if (!S.files.length || !fields.length) return;
 
   const config = {
-    files:      S.files,
+    files:                 S.files,
     fields,
-    workers:    parseInt($('workers-slider').value, 10),
-    db_enabled: $('db-toggle').checked,
-    db_schema:  $('db-schema').value.trim(),
-    db_table:   $('db-table').value.trim(),
+    workers:               parseInt($('workers-slider').value, 10),
+    db_enabled:            $('db-toggle').checked,
+    db_schema:             $('db-schema').value.trim(),
+    db_table:              $('db-table').value.trim(),
+    classification_prompt: $('filter-toggle').checked
+      ? $('filter-prompt').value.trim()
+      : '',
   };
 
   // Reset processing page
-  $('st-done').textContent    = '0';
-  $('st-total').textContent   = S.files.length;
-  $('st-success').textContent = '0';
-  $('st-failed').textContent  = '0';
-  $('st-speed').textContent   = '—';
-  $('st-eta').textContent     = '—';
+  $('st-done').textContent     = '0';
+  $('st-total').textContent    = S.files.length;
+  $('st-success').textContent  = '0';
+  $('st-failed').textContent   = '0';
+  $('st-rejected').textContent = '0';
+  $('st-speed').textContent    = '—';
+  $('st-eta').textContent      = '—';
   $('progress-fill').style.width = '0%';
   $('progress-pct').textContent  = '0%';
   $('last-file').textContent  = 'Подготовка…';
@@ -230,8 +239,9 @@ function handleMsg(d) {
 function updateProgress(d) {
   if (d.done  !== undefined) $('st-done').textContent    = d.done;
   if (d.total !== undefined) $('st-total').textContent   = d.total;
-  if (d.successful !== undefined) $('st-success').textContent = d.successful;
-  if (d.failed     !== undefined) $('st-failed').textContent  = d.failed;
+  if (d.successful !== undefined) $('st-success').textContent  = d.successful;
+  if (d.failed     !== undefined) $('st-failed').textContent   = d.failed;
+  if (d.rejected   !== undefined) $('st-rejected').textContent = d.rejected;
 
   if (d.speed !== undefined && d.speed > 0) {
     $('st-speed').textContent = d.speed.toFixed(1);
@@ -250,15 +260,27 @@ function appendLog(d) {
   const entry = document.createElement('div');
   entry.className = 'log-entry';
 
-  const icon = d.last_success !== undefined ? d.last_success : d.success;
-  const name = d.last_file || d.file || '—';
-  const err  = d.last_error  || d.error || '';
+  const rejected = d.last_rejected || null;
+  const err      = d.last_error  || d.error || '';
+  const name     = d.last_file || d.file || '—';
   const shortName = name.replace(/.*[/\\]/, '');
 
+  let icon, suffix;
+  if (rejected) {
+    icon   = '⏭';
+    suffix = `<span class="log-skip-txt">— отклонён: ${esc(rejected)}</span>`;
+  } else if (err) {
+    icon   = '❌';
+    suffix = `<span class="log-err-txt">— ${esc(err)}</span>`;
+  } else {
+    icon   = '✅';
+    suffix = '';
+  }
+
   entry.innerHTML =
-    `<span class="log-icon">${icon ? '✅' : '❌'}</span>` +
+    `<span class="log-icon">${icon}</span>` +
     `<span class="log-file">${esc(shortName)}</span>` +
-    (err ? `<span class="log-err-txt">— ${esc(err)}</span>` : '');
+    suffix;
 
   const list = $('log-list');
   list.appendChild(entry);
@@ -267,10 +289,11 @@ function appendLog(d) {
 
 // ── Results page ───────────────────────────────────────────────────
 function showResults(d) {
-  $('r-total').textContent   = d.total;
-  $('r-success').textContent = d.successful;
-  $('r-failed').textContent  = d.failed;
-  $('r-rate').textContent    = d.total > 0 ? `${Math.round(d.successful / d.total * 100)}%` : '—';
+  $('r-total').textContent    = d.total;
+  $('r-success').textContent  = d.successful;
+  $('r-failed').textContent   = d.failed;
+  $('r-rejected').textContent = d.rejected ?? 0;
+  $('r-rate').textContent     = d.total > 0 ? `${Math.round(d.successful / d.total * 100)}%` : '—';
 
   if (d.failed > 0 && d.error_files?.length) {
     $('r-err-count').textContent = d.failed;
@@ -319,8 +342,11 @@ function resetApp() {
   $('scan-result').innerHTML = '';
   $('fields-list').innerHTML = '';
   _fieldCounter = 0;
-  $('db-toggle').checked   = false;
+  $('db-toggle').checked     = false;
   hide($('db-config'));
+  $('filter-toggle').checked = false;
+  $('filter-prompt').value   = '';
+  hide($('filter-config'));
   hide($('errors-card'));
   hide($('db-res-card'));
 

@@ -45,3 +45,16 @@ def build_extraction_system_prompt() -> str:
 
 def build_extraction_user_prompt(ocr_text: str) -> str:
     return f"Извлеки все перечисленные поля из следующего распознанного текста документа:\n\n{ocr_text}"
+
+
+def build_classification_system_prompt() -> str:
+    return """Ты — классификатор документов. Тебе будет передан критерий отбора и распознанный текст документа.
+Твоя задача — определить, соответствует ли документ критерию.
+Отвечай ТОЛЬКО JSON-объектом без каких-либо пояснений:
+{"relevant": true, "reason": "краткое обоснование на русском"}
+или
+{"relevant": false, "reason": "краткое обоснование на русском"}"""
+
+
+def build_classification_user_prompt(user_criteria: str, ocr_text: str) -> str:
+    return f"Критерий отбора: {user_criteria}\n\nТекст документа:\n{ocr_text}"

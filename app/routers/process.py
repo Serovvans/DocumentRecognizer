@@ -81,6 +81,7 @@ async def process_ws(websocket: WebSocket):
             callback=callback,
             output_path=str(output_path),
             db_writer=db_writer,
+            classification_prompt=config.get("classification_prompt", ""),
         ),
     )
 
