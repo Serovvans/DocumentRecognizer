@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Document Recognizer</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Header / step nav ─────────────────────────────────────── -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+          <polyline points="10 9 9 9 8 9"/>
+        </svg>
+        <span>Document Recognizer</span>
+      </div>
+      <nav class="steps-nav">
+        <button class="step-btn active" id="nav-config" onclick="goTo('config')">
+          <span class="step-circle">1</span><span class="step-label">Настройка</span>
+        </button>
+        <span class="step-connector"></span>
+        <button class="step-btn" id="nav-processing" disabled>
+          <span class="step-circle">2</span><span class="step-label">Обработка</span>
+        </button>
+        <span class="step-connector"></span>
+        <button class="step-btn" id="nav-results" disabled onclick="goTo('results')">
+          <span class="step-circle">3</span><span class="step-label">Результаты</span>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ── Main content ──────────────────────────────────────────── -->
+  <main class="main">
+
+    <!-- ══ Page 1: Config ══════════════════════════════════════ -->
+    <section id="page-config" class="page">
+
+      <!-- Folder -->
+      <div class="card">
+        <h2 class="card-title">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          Папка с документами
+        </h2>
+        <div class="folder-row">
+          <input type="text" id="folder-path" class="input" placeholder="/Users/ivan/Documents/PDFs" />
+          <button class="btn btn-secondary" onclick="scanFolder()">Сканировать</button>
+        </div>
+        <div id="scan-result" class="scan-result"></div>
+      </div>
+
+      <!-- Fields -->
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
+              <line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/>
+              <line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            Поля для извлечения
+          </h2>
+          <div class="preset-bar">
+            <select id="preset-select" class="select"></select>
+            <button class="btn btn-sm btn-secondary" onclick="loadPreset()">Загрузить</button>
+            <div class="divider-v"></div>
+            <input type="text" id="preset-name" class="input input-sm" placeholder="Название пресета" />
+            <button class="btn btn-sm btn-secondary" onclick="savePreset()">Сохранить</button>
+            <button class="btn btn-sm btn-danger-ghost" onclick="deletePreset()">Удалить</button>
+          </div>
+        </div>
+
+        <div class="fields-table-head">
+          <span>Название поля</span>
+          <span>Описание / откуда брать</span>
+          <span></span>
+        </div>
+        <div id="fields-list"></div>
+        <button class="btn btn-outline mt-12" onclick="addField()">+ Добавить поле</button>
+      </div>
+
+      <!-- Settings -->
+      <div class="card">
+        <h2 class="card-title">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+          </svg>
+          Настройки обработки
+        </h2>
+        <div class="setting-row">
+          <label class="setting-label">Параллельных потоков:</label>
+          <input type="range" id="workers-slider" min="1" max="8" value="2"
+                 oninput="document.getElementById('workers-val').textContent=this.value" />
+          <span class="workers-badge" id="workers-val">2</span>
+          <span class="hint-text">Больше потоков = быстрее, но выше нагрузка на GPU</span>
+        </div>
+      </div>
+
+      <!-- DB -->
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+            </svg>
+            База данных
+          </h2>
+          <label class="toggle">
+            <input type="checkbox" id="db-toggle" onchange="toggleDB(this.checked)" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <div id="db-config" class="db-config hidden">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="db-schema">Схема</label>
+              <input type="text" id="db-schema" class="input" value="public" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="db-table">Таблица</label>
+              <input type="text" id="db-table" class="input" value="documents" />
+            </div>
+          </div>
+          <p class="hint-text">SSH и параметры БД берутся из файла <code>.env</code></p>
+        </div>
+      </div>
+
+      <div class="action-bar">
+        <button id="start-btn" class="btn btn-primary btn-large" onclick="startProcessing()" disabled>
+          Начать обработку
+        </button>
+      </div>
+    </section>
+
+    <!-- ══ Page 2: Processing ══════════════════════════════════ -->
+    <section id="page-processing" class="page hidden">
+      <div class="card">
+        <h2 class="card-title">Обработка документов</h2>
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-val"><span id="st-done">0</span>/<span id="st-total">0</span></div>
+            <div class="stat-lbl">Документов</div>
+          </div>
+          <div class="stat-box success">
+            <div class="stat-val" id="st-success">0</div>
+            <div class="stat-lbl">Успешно</div>
+          </div>
+          <div class="stat-box error">
+            <div class="stat-val" id="st-failed">0</div>
+            <div class="stat-lbl">Ошибки</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-val" id="st-speed">—</div>
+            <div class="stat-lbl">сек / файл</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-val" id="st-eta">—</div>
+            <div class="stat-lbl">Осталось</div>
+          </div>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+          <span id="progress-pct" class="progress-pct">0%</span>
+        </div>
+        <p id="last-file" class="last-file"></p>
+      </div>
+
+      <div class="card card-log">
+        <h2 class="card-title">Лог обработки</h2>
+        <div id="log-list" class="log-list"></div>
+      </div>
+    </section>
+
+    <!-- ══ Page 3: Results ════════════════════════════════════ -->
+    <section id="page-results" class="page hidden">
+      <div class="card">
+        <h2 class="card-title">Итоги обработки</h2>
+        <div class="results-grid">
+          <div class="res-box">
+            <div class="res-num" id="r-total">0</div>
+            <div class="res-lbl">Всего</div>
+          </div>
+          <div class="res-box success">
+            <div class="res-num" id="r-success">0</div>
+            <div class="res-lbl">Успешно</div>
+          </div>
+          <div class="res-box error">
+            <div class="res-num" id="r-failed">0</div>
+            <div class="res-lbl">Ошибки</div>
+          </div>
+          <div class="res-box info">
+            <div class="res-num" id="r-rate">0%</div>
+            <div class="res-lbl">Точность</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="errors-card" class="card hidden">
+        <div class="collapsible-head" onclick="toggleErrors()">
+          <h2 class="card-title">Файлы с ошибками (<span id="r-err-count">0</span>)</h2>
+          <span id="err-chevron" class="chevron">▼</span>
+        </div>
+        <div id="err-list" class="err-list"></div>
+      </div>
+
+      <div id="db-res-card" class="card hidden">
+        <h2 class="card-title">Запись в БД</h2>
+        <div class="db-res-row">
+          <span>Вставлено: <strong id="r-inserted">0</strong></span>
+          <span>Ошибок: <strong id="r-db-err">0</strong></span>
+        </div>
+      </div>
+
+      <div class="action-bar">
+        <button class="btn btn-primary btn-large" onclick="downloadJSON()">Скачать JSON</button>
+        <button class="btn btn-secondary btn-large" onclick="resetApp()">Новая обработка</button>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- Toast container -->
+<div id="toast" class="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
