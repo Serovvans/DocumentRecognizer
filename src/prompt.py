@@ -58,3 +58,11 @@ def build_classification_system_prompt() -> str:
 
 def build_classification_user_prompt(user_criteria: str, ocr_text: str) -> str:
     return f"Критерий отбора: {user_criteria}\n\nТекст документа:\n{ocr_text}"
+
+
+def build_json_fix_prompt(parse_error: str) -> str:
+    error_line = f"\nОшибка парсинга: {parse_error}" if parse_error else ""
+    return (
+        f"Твой предыдущий ответ содержит невалидный JSON.{error_line}\n\n"
+        "Исправь ошибку и верни только корректный JSON-объект без каких-либо пояснений."
+    )

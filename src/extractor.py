@@ -12,8 +12,11 @@ from .prompt import (
     build_extraction_user_prompt,
     build_classification_system_prompt,
     build_classification_user_prompt,
+    build_json_fix_prompt,
 )
-from .json_utils import extract_json
+from .json_utils import extract_json, get_last_parse_error
+
+_MAX_JSON_RETRIES = 3
 
 
 class DocumentRejected(Exception):
@@ -23,6 +26,31 @@ class DocumentRejected(Exception):
         self.reason = reason
 
 _default_log: Callable[[str], None] = lambda msg: print(msg, file=sys.stderr)
+
+
+def _extract_with_retry(
+    messages: list,
+    model: str,
+    prefix: str,
+    log: Callable[[str], None],
+) -> dict:
+    for attempt in range(_MAX_JSON_RETRIES):
+        response = chat(model=model, messages=messages, options={"temperature": 0})
+        text = response.message.content or ""
+        if not text.strip() and response.message.thinking:
+            log(f"{prefix}content пустой, используем thinking как fallback")
+            text = response.message.thinking or ""
+        log(f"{prefix}--- Сырой ответ модели (попытка {attempt + 1}) ---\n{text}\n{prefix}--- Конец ответа ---")
+        try:
+            return extract_json(text)
+        except ValueError as e:
+            if attempt == _MAX_JSON_RETRIES - 1:
+                raise
+            parse_error = get_last_parse_error(text)
+            log(f"{prefix}Попытка {attempt + 1}: ошибка парсинга JSON ({parse_error}), запрашиваем исправление у модели...")
+            messages.append({"role": "assistant", "content": text})
+            messages.append({"role": "user", "content": build_json_fix_prompt(parse_error)})
+    raise RuntimeError("unreachable")
 
 
 def _ocr_page(
@@ -62,27 +90,11 @@ def extract_fields(pdf_path: str, log: Callable[[str], None] = _default_log) -> 
     log(f"{prefix}--- Результат OCR ---\n{combined_ocr}\n{prefix}--- Конец OCR ---")
 
     log(f"{prefix}Этап 2: извлечение полей моделью {EXTRACTION_MODEL}...")
-    response = chat(
-        model=EXTRACTION_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": build_extraction_system_prompt(),
-            },
-            {
-                "role": "user",
-                "content": build_extraction_user_prompt(combined_ocr),
-            },
-        ],
-        options={"temperature": 0},
-    )
-
-    text = response.message.content or ""
-    if not text.strip() and response.message.thinking:
-        log(f"{prefix}content пустой, используем thinking как fallback")
-        text = response.message.thinking or ""
-    log(f"{prefix}--- Сырой ответ модели ---\n{text}\n{prefix}--- Конец ответа ---")
-    return extract_json(text)
+    messages = [
+        {"role": "system", "content": build_extraction_system_prompt()},
+        {"role": "user", "content": build_extraction_user_prompt(combined_ocr)},
+    ]
+    return _extract_with_retry(messages, EXTRACTION_MODEL, prefix, log)
 
 
 def _classify_document(
@@ -146,18 +158,8 @@ def extract_fields_dynamic(
         _classify_document(combined_ocr, classification_prompt, prefix, log, model=extraction_model)
 
     log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
-    response = chat(
-        model=extraction_model,
-        messages=[
-            {"role": "system", "content": build_extraction_system_prompt_dynamic(fields)},
-            {"role": "user", "content": build_extraction_user_prompt(combined_ocr)},
-        ],
-        options={"temperature": 0},
-    )
-
-    text = response.message.content or ""
-    if not text.strip() and response.message.thinking:
-        log(f"{prefix}content пустой, используем thinking как fallback")
-        text = response.message.thinking or ""
-    log(f"{prefix}--- Сырой ответ модели ---\n{text}\n{prefix}--- Конец ответа ---")
-    return extract_json(text)
+    messages = [
+        {"role": "system", "content": build_extraction_system_prompt_dynamic(fields)},
+        {"role": "user", "content": build_extraction_user_prompt(combined_ocr)},
+    ]
+    return _extract_with_retry(messages, extraction_model, prefix, log)
