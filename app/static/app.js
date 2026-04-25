@@ -192,7 +192,7 @@ function startProcessing() {
 
   // Open WebSocket
   if (S.ws) S.ws.close();
-  const ws = new WebSocket(`ws://${location.host}/ws/process`);
+  const ws = new WebSocket(`ws://${location.host}/api/ws/process`);
   S.ws = ws;
 
   ws.onopen  = () => ws.send(JSON.stringify(config));
