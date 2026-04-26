@@ -48,16 +48,31 @@ def build_extraction_user_prompt(ocr_text: str) -> str:
 
 
 def build_classification_system_prompt() -> str:
-    return """Ты — классификатор документов. Тебе будет передан критерий отбора и распознанный текст документа.
-Твоя задача — определить, соответствует ли документ критерию.
+    return """Ты — классификатор документов. Тебе будут переданы:
+1. Критерий отбора пользователя
+2. Список полей, которые должны присутствовать в документе
+3. Распознанный текст документа
+
+Твоя задача — определить, соответствует ли документ критерию отбора И является ли он документом того типа, из которого можно извлечь указанные поля.
+Документ считается подходящим только если выполняются оба условия.
 Отвечай ТОЛЬКО JSON-объектом без каких-либо пояснений:
 {"relevant": true, "reason": "краткое обоснование на русском"}
 или
 {"relevant": false, "reason": "краткое обоснование на русском"}"""
 
 
-def build_classification_user_prompt(user_criteria: str, ocr_text: str) -> str:
-    return f"Критерий отбора: {user_criteria}\n\nТекст документа:\n{ocr_text}"
+def build_classification_user_prompt(
+    user_criteria: str, ocr_text: str, fields: list[dict] | None = None
+) -> str:
+    parts = [f"Критерий отбора: {user_criteria}"]
+    if fields:
+        fields_str = "\n".join(
+            f"{i + 1}. {f['name']}" + (f" — {f['description']}" if f.get("description") else "")
+            for i, f in enumerate(fields)
+        )
+        parts.append(f"Ожидаемые поля документа:\n{fields_str}")
+    parts.append(f"Текст документа:\n{ocr_text}")
+    return "\n\n".join(parts)
 
 
 def build_json_fix_prompt(parse_error: str) -> str:
