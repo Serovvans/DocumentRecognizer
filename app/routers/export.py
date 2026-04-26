@@ -49,7 +49,7 @@ async def preview_results(session_id: str):
         raise HTTPException(404, "Session not found or results not ready")
 
     records = []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
