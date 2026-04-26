@@ -1,9 +1,10 @@
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 from ollama import chat
 
-from .config import OCR_MODEL, EXTRACTION_MODEL
+from .config import OCR_MODEL, EXTRACTION_MODEL, OCR_PAGE_WORKERS
 from .pdf_utils import pdf_to_images_base64
 from .prompt import (
     build_ocr_prompt,
@@ -35,7 +36,7 @@ def _extract_with_retry(
     log: Callable[[str], None],
 ) -> dict:
     for attempt in range(_MAX_JSON_RETRIES):
-        response = chat(model=model, messages=messages, options={"temperature": 0})
+        response = chat(model=model, messages=messages, options=_EXTRACT_OPTIONS)
         text = response.message.content or ""
         if not text.strip() and response.message.thinking:
             log(f"{prefix}content пустой, используем thinking как fallback")
@@ -51,6 +52,19 @@ def _extract_with_retry(
             messages.append({"role": "assistant", "content": text})
             messages.append({"role": "user", "content": build_json_fix_prompt(parse_error)})
     raise RuntimeError("unreachable")
+
+
+_OCR_OPTIONS = {
+    "temperature": 0,
+    "num_batch": 2048,
+    "num_predict": 3072,
+}
+
+_EXTRACT_OPTIONS = {
+    "temperature": 0,
+    "num_batch": 2048,
+    "num_predict": 2048,
+}
 
 
 def _ocr_page(
@@ -70,9 +84,32 @@ def _ocr_page(
                 "images": [image_b64],
             }
         ],
-        options={"temperature": 0},
+        options=_OCR_OPTIONS,
     )
     return response.message.content or ""
+
+
+def _ocr_pages_parallel(
+    images: list[str],
+    prefix: str,
+    log: Callable[[str], None],
+    ocr_model: str = OCR_MODEL,
+    max_workers: int = 4,
+) -> list[str]:
+    """OCR all pages concurrently; returns texts in page order."""
+    results: dict[int, str] = {}
+
+    def _task(args: tuple[int, str]) -> tuple[int, str]:
+        page_num, image_b64 = args
+        return page_num, _ocr_page(image_b64, page_num, prefix, log, ocr_model)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_task, (i, img)): i for i, img in enumerate(images, start=1)}
+        for future in as_completed(futures):
+            page_num, text = future.result()
+            results[page_num] = text
+
+    return [f"=== Страница {i} ===\n{results[i]}" for i in sorted(results)]
 
 
 def extract_fields(pdf_path: str, log: Callable[[str], None] = _default_log) -> dict:
@@ -80,11 +117,8 @@ def extract_fields(pdf_path: str, log: Callable[[str], None] = _default_log) -> 
     log(f"{prefix}Конвертация PDF в изображения...")
     images = pdf_to_images_base64(pdf_path)
 
-    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {OCR_MODEL}...")
-    page_texts = []
-    for i, image in enumerate(images, start=1):
-        text = _ocr_page(image, i, prefix, log)
-        page_texts.append(f"=== Страница {i} ===\n{text}")
+    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {OCR_MODEL} (параллельно)...")
+    page_texts = _ocr_pages_parallel(images, prefix, log, max_workers=OCR_PAGE_WORKERS)
 
     combined_ocr = "\n\n".join(page_texts)
     log(f"{prefix}--- Результат OCR ---\n{combined_ocr}\n{prefix}--- Конец OCR ---")
@@ -113,7 +147,7 @@ def _classify_document(
             {"role": "system", "content": build_classification_system_prompt()},
             {"role": "user", "content": build_classification_user_prompt(classification_prompt, ocr_text, fields)},
         ],
-        options={"temperature": 0},
+        options={**_EXTRACT_OPTIONS, "num_predict": 256},
     )
     text = response.message.content or ""
     try:
@@ -147,11 +181,8 @@ def extract_fields_dynamic(
     log(f"{prefix}Конвертация PDF в изображения...")
     images = pdf_to_images_base64(pdf_path)
 
-    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {ocr_model}...")
-    page_texts = []
-    for i, image in enumerate(images, start=1):
-        text = _ocr_page(image, i, prefix, log, ocr_model=ocr_model)
-        page_texts.append(f"=== Страница {i} ===\n{text}")
+    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {ocr_model} (параллельно)...")
+    page_texts = _ocr_pages_parallel(images, prefix, log, ocr_model=ocr_model, max_workers=OCR_PAGE_WORKERS)
 
     combined_ocr = "\n\n".join(page_texts)
 
