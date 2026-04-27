@@ -60,7 +60,7 @@ async function scanFolder() {
 }
 
 // ── Field editor ───────────────────────────────────────────────────
-function addField(name = '', desc = '') {
+function addField(name = '', desc = '', multiMode = 'rows') {
   const id = ++_fieldCounter;
   const row = document.createElement('div');
   row.className = 'field-row';
@@ -68,6 +68,10 @@ function addField(name = '', desc = '') {
   row.innerHTML = `
     <input type="text" class="input fn" placeholder="Название поля"          value="${esc(name)}"/>
     <input type="text" class="input fd" placeholder="Описание / откуда брать" value="${esc(desc)}"/>
+    <select class="select-field fm">
+      <option value="rows"   ${multiMode === 'rows'    ? 'selected' : ''}>Строки</option>
+      <option value="columns"${multiMode === 'columns' ? 'selected' : ''}>Столбцы _N</option>
+    </select>
     <button class="btn-icon" onclick="removeField(${id})" title="Удалить">×</button>
   `;
   row.querySelector('.fn').addEventListener('input', checkStartEnabled);
@@ -84,8 +88,9 @@ function removeField(id) {
 function getFields() {
   return Array.from($('fields-list').querySelectorAll('.field-row'))
     .map(r => ({
-      name: r.querySelector('.fn').value.trim(),
-      description: r.querySelector('.fd').value.trim(),
+      name:             r.querySelector('.fn').value.trim(),
+      description:      r.querySelector('.fd').value.trim(),
+      multi_value_mode: r.querySelector('.fm').value,
     }))
     .filter(f => f.name);
 }
@@ -115,7 +120,7 @@ function loadPreset() {
 
   $('fields-list').innerHTML = '';
   _fieldCounter = 0;
-  data.fields.forEach(f => addField(f.name, f.description || ''));
+  data.fields.forEach(f => addField(f.name, f.description || '', f.multi_value_mode || 'rows'));
   toast(`Пресет «${name}» загружен`);
 }
 

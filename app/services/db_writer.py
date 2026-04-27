@@ -1,4 +1,3 @@
-import json
 import threading
 
 import psycopg2
@@ -14,13 +13,20 @@ def _qi(name: str) -> str:
 
 
 class DBWriter:
-    """Thread-safe DB writer that connects via SSH tunnel using psycopg2."""
+    """Thread-safe DB writer that connects via SSH tunnel using psycopg2.
+
+    Each field dict must have a "name" key and an optional "multi_value_mode":
+      - "rows" (default): if the extracted value is a list, one DB row is inserted
+        per list element; scalar fields are repeated across all rows.
+      - "columns": list values are spread into columns field_1, field_2, … field_N;
+        always produces exactly one DB row per document.
+    """
 
     def __init__(
         self,
         schema: str,
         table: str,
-        fields: list[str],
+        fields: list[dict],
         save_source: bool = True,
         db_name: str = "",
         db_user: str = "",
@@ -28,7 +34,7 @@ class DBWriter:
     ):
         self.schema = schema
         self.table = table
-        self.fields = fields  # user-defined field names (keys in extracted JSON)
+        self.fields = fields
         self.save_source = save_source
         self._db_name = db_name or cfg.DB_NAME
         self._db_user = db_user or cfg.DB_USER
@@ -37,6 +43,8 @@ class DBWriter:
         self._tunnel: SSHTunnelForwarder | None = None
         self._pool: psycopg2.pool.ThreadedConnectionPool | None = None
         self._lock = threading.Lock()
+        self._col_lock = threading.Lock()
+        self._known_columns: set[str] = set()
         self.inserted = 0
         self.errors = 0
 
@@ -84,6 +92,7 @@ class DBWriter:
     # ── schema management ────────────────────────────────────────────────────
 
     def _ensure_columns(self) -> None:
+        """Add fixed columns (source_file + all "rows" mode fields) at startup."""
         t = f"{_qi(self.schema)}.{_qi(self.table)}"
         conn = self._pool.getconn()
         try:
@@ -92,38 +101,97 @@ class DBWriter:
                     cur.execute(
                         f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi('source_file')} TEXT"
                     )
+                    self._known_columns.add("source_file")
                 for field in self.fields:
-                    cur.execute(
-                        f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(field)} TEXT"
-                    )
+                    if field.get("multi_value_mode", "rows") != "columns":
+                        name = field["name"]
+                        cur.execute(
+                            f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(name)} TEXT"
+                        )
+                        self._known_columns.add(name)
             conn.commit()
         finally:
             self._pool.putconn(conn)
 
+    def _add_column(self, conn, col_name: str) -> None:
+        """Ensure a column exists; thread-safe and idempotent."""
+        with self._col_lock:
+            if col_name in self._known_columns:
+                return
+            t = f"{_qi(self.schema)}.{_qi(self.table)}"
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(col_name)} TEXT"
+                )
+            conn.commit()
+            self._known_columns.add(col_name)
+
     # ── write ────────────────────────────────────────────────────────────────
 
     def write(self, source_file: str, data: dict) -> None:
-        all_fields = (["source_file"] if self.save_source else []) + self.fields
-        values: list = ([source_file] if self.save_source else [])
+        rows_fields: list[tuple[str, object]] = []
+        cols_fields: list[tuple[str, object]] = []
         for field in self.fields:
-            val = data.get(field)
-            if isinstance(val, list):
-                val = json.dumps(val, ensure_ascii=False)
-            elif val is not None:
-                val = str(val)
-            values.append(val)
+            name = field["name"]
+            val = data.get(name)
+            if field.get("multi_value_mode", "rows") == "columns":
+                cols_fields.append((name, val))
+            else:
+                rows_fields.append((name, val))
 
-        t = f"{_qi(self.schema)}.{_qi(self.table)}"
-        cols = ", ".join(_qi(f) for f in all_fields)
-        placeholders = ", ".join("%s" for _ in all_fields)
+        # How many DB rows to insert (max list length among "rows" mode fields)
+        n_rows = 1
+        for _name, val in rows_fields:
+            if isinstance(val, list):
+                n_rows = max(n_rows, len(val))
 
         conn = self._pool.getconn()
         try:
-            with conn.cursor() as cur:
-                cur.execute(f"INSERT INTO {t} ({cols}) VALUES ({placeholders})", values)
+            # Ensure "columns" mode columns exist before inserting
+            for name, val in cols_fields:
+                if isinstance(val, list):
+                    for i in range(1, len(val) + 1):
+                        self._add_column(conn, f"{name}_{i}")
+                else:
+                    self._add_column(conn, name)
+
+            t = f"{_qi(self.schema)}.{_qi(self.table)}"
+            n_inserted = 0
+            for row_idx in range(n_rows):
+                col_names: list[str] = []
+                values: list = []
+
+                if self.save_source:
+                    col_names.append("source_file")
+                    values.append(source_file)
+
+                for name, val in rows_fields:
+                    col_names.append(name)
+                    if isinstance(val, list):
+                        values.append(str(val[row_idx]) if row_idx < len(val) else None)
+                    else:
+                        values.append(str(val) if val is not None else None)
+
+                for name, val in cols_fields:
+                    if isinstance(val, list):
+                        for i, v in enumerate(val, 1):
+                            col_names.append(f"{name}_{i}")
+                            values.append(str(v) if v is not None else None)
+                    else:
+                        col_names.append(name)
+                        values.append(str(val) if val is not None else None)
+
+                cols_sql = ", ".join(_qi(c) for c in col_names)
+                placeholders = ", ".join("%s" for _ in col_names)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"INSERT INTO {t} ({cols_sql}) VALUES ({placeholders})", values
+                    )
+                n_inserted += 1
+
             conn.commit()
             with self._lock:
-                self.inserted += 1
+                self.inserted += n_inserted
         except Exception:
             try:
                 conn.rollback()

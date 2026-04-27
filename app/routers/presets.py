@@ -10,6 +10,7 @@ router = APIRouter()
 class FieldDef(BaseModel):
     name: str
     description: str = ""
+    multi_value_mode: str = "rows"
 
 
 class PresetPayload(BaseModel):

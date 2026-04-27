@@ -62,7 +62,7 @@ async def process_ws(websocket: WebSocket):
         db_writer = DBWriter(
             schema=config.get("db_schema", "public"),
             table=config.get("db_table", "documents"),
-            fields=[f["name"] for f in config.get("fields", [])],
+            fields=config.get("fields", []),
             save_source=config.get("db_save_source", True),
             db_name=config.get("db_name", ""),
             db_user=config.get("db_user", ""),
