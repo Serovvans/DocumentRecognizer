@@ -64,6 +64,9 @@ async def process_ws(websocket: WebSocket):
             table=config.get("db_table", "documents"),
             fields=[f["name"] for f in config.get("fields", [])],
             save_source=config.get("db_save_source", True),
+            db_name=config.get("db_name", ""),
+            db_user=config.get("db_user", ""),
+            db_password=config.get("db_password", ""),
         )
         try:
             db_writer.start(max_workers=config.get("workers", 2))

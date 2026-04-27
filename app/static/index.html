@@ -151,6 +151,20 @@
         <div id="db-config" class="db-config hidden">
           <div class="form-row">
             <div class="form-group">
+              <label class="form-label" for="db-name">Имя базы данных</label>
+              <input type="text" id="db-name" class="input" placeholder="postgres" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="db-user">Пользователь</label>
+              <input type="text" id="db-user" class="input" placeholder="postgres" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="db-password">Пароль</label>
+              <input type="password" id="db-password" class="input" placeholder="••••••••" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
               <label class="form-label" for="db-schema">Схема</label>
               <input type="text" id="db-schema" class="input" value="public" />
             </div>
@@ -163,7 +177,7 @@
             <input type="checkbox" id="db-save-source" checked />
             <span>Сохранять путь к файлу (<code>source_file</code>)</span>
           </label>
-          <p class="hint-text">SSH и параметры БД берутся из файла <code>.env</code></p>
+          <p class="hint-text">SSH-параметры берутся из файла <code>.env</code></p>
         </div>
       </div>
 

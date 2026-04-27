@@ -175,6 +175,9 @@ function startProcessing() {
     fields,
     workers:               parseInt($('workers-slider').value, 10),
     db_enabled:            $('db-toggle').checked,
+    db_name:               $('db-name').value.trim(),
+    db_user:               $('db-user').value.trim(),
+    db_password:           $('db-password').value,
     db_schema:             $('db-schema').value.trim(),
     db_table:              $('db-table').value.trim(),
     db_save_source:        $('db-save-source').checked,
@@ -344,6 +347,9 @@ function resetApp() {
   $('fields-list').innerHTML = '';
   _fieldCounter = 0;
   $('db-toggle').checked       = false;
+  $('db-name').value           = '';
+  $('db-user').value           = '';
+  $('db-password').value       = '';
   $('db-save-source').checked  = true;
   hide($('db-config'));
   $('filter-toggle').checked = false;

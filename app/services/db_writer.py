@@ -16,11 +16,23 @@ def _qi(name: str) -> str:
 class DBWriter:
     """Thread-safe DB writer that connects via SSH tunnel using psycopg2."""
 
-    def __init__(self, schema: str, table: str, fields: list[str], save_source: bool = True):
+    def __init__(
+        self,
+        schema: str,
+        table: str,
+        fields: list[str],
+        save_source: bool = True,
+        db_name: str = "",
+        db_user: str = "",
+        db_password: str = "",
+    ):
         self.schema = schema
         self.table = table
         self.fields = fields  # user-defined field names (keys in extracted JSON)
         self.save_source = save_source
+        self._db_name = db_name or cfg.DB_NAME
+        self._db_user = db_user or cfg.DB_USER
+        self._db_password = db_password if db_password else cfg.DB_PASSWORD
 
         self._tunnel: SSHTunnelForwarder | None = None
         self._pool: psycopg2.pool.ThreadedConnectionPool | None = None
@@ -51,9 +63,9 @@ class DBWriter:
             max(2, max_workers + 1),
             host="127.0.0.1",
             port=self._tunnel.local_bind_port,
-            database=cfg.DB_NAME,
-            user=cfg.DB_USER,
-            password=cfg.DB_PASSWORD,
+            database=self._db_name,
+            user=self._db_user,
+            password=self._db_password,
         )
         self._ensure_columns()
 
