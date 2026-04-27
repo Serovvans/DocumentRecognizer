@@ -1,4 +1,5 @@
 import threading
+from datetime import datetime
 
 import psycopg2
 import psycopg2.pool
@@ -12,12 +13,56 @@ def _qi(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+_SQL_TYPE_MAP = {
+    "text":    "TEXT",
+    "double":  "DOUBLE PRECISION",
+    "integer": "INTEGER",
+    "date":    "DATE",
+}
+
+
+def _sql_type(db_type: str) -> str:
+    return _SQL_TYPE_MAP.get(db_type, "TEXT")
+
+
+def _cast_value(val, db_type: str):
+    """Convert an extracted string value to the appropriate Python type for psycopg2."""
+    if val is None:
+        return None
+    if db_type == "double":
+        s = str(val).strip().replace(",", ".")
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+    if db_type == "integer":
+        s = str(val).strip().replace(",", ".").split(".")[0]
+        s = "".join(c for c in s if c.isdigit() or c == "-")
+        try:
+            return int(s)
+        except (ValueError, TypeError):
+            return None
+    if db_type == "date":
+        s = str(val).strip()
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        return None
+    return str(val)
+
+
 class DBWriter:
     """Thread-safe DB writer that connects via SSH tunnel using psycopg2.
 
-    Each field dict must have a "name" key and an optional "multi_value_mode":
-      - "rows" (default): if the extracted value is a list, one DB row is inserted
-        per list element; scalar fields are repeated across all rows.
+    Each field dict must have a "name" key and optional keys:
+      - "multi_value_mode": "rows" (default) or "columns"
+      - "db_type": "text" (default), "double", "integer", "date"
+
+    multi_value_mode:
+      - "rows": if the extracted value is a list, one DB row is inserted per list
+        element; scalar fields are repeated across all rows.
       - "columns": list values are spread into columns field_1, field_2, … field_N;
         always produces exactly one DB row per document.
     """
@@ -105,23 +150,25 @@ class DBWriter:
                 for field in self.fields:
                     if field.get("multi_value_mode", "rows") != "columns":
                         name = field["name"]
+                        col_type = _sql_type(field.get("db_type", "text"))
                         cur.execute(
-                            f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(name)} TEXT"
+                            f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(name)} {col_type}"
                         )
                         self._known_columns.add(name)
             conn.commit()
         finally:
             self._pool.putconn(conn)
 
-    def _add_column(self, conn, col_name: str) -> None:
+    def _add_column(self, conn, col_name: str, db_type: str = "text") -> None:
         """Ensure a column exists; thread-safe and idempotent."""
         with self._col_lock:
             if col_name in self._known_columns:
                 return
             t = f"{_qi(self.schema)}.{_qi(self.table)}"
+            col_type = _sql_type(db_type)
             with conn.cursor() as cur:
                 cur.execute(
-                    f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(col_name)} TEXT"
+                    f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(col_name)} {col_type}"
                 )
             conn.commit()
             self._known_columns.add(col_name)
@@ -129,31 +176,32 @@ class DBWriter:
     # ── write ────────────────────────────────────────────────────────────────
 
     def write(self, source_file: str, data: dict) -> None:
-        rows_fields: list[tuple[str, object]] = []
-        cols_fields: list[tuple[str, object]] = []
+        rows_fields: list[tuple[str, object, str]] = []
+        cols_fields: list[tuple[str, object, str]] = []
         for field in self.fields:
             name = field["name"]
             val = data.get(name)
+            db_type = field.get("db_type", "text")
             if field.get("multi_value_mode", "rows") == "columns":
-                cols_fields.append((name, val))
+                cols_fields.append((name, val, db_type))
             else:
-                rows_fields.append((name, val))
+                rows_fields.append((name, val, db_type))
 
         # How many DB rows to insert (max list length among "rows" mode fields)
         n_rows = 1
-        for _name, val in rows_fields:
+        for _name, val, _db_type in rows_fields:
             if isinstance(val, list):
                 n_rows = max(n_rows, len(val))
 
         conn = self._pool.getconn()
         try:
             # Ensure "columns" mode columns exist before inserting
-            for name, val in cols_fields:
+            for name, val, db_type in cols_fields:
                 if isinstance(val, list):
                     for i in range(1, len(val) + 1):
-                        self._add_column(conn, f"{name}_{i}")
+                        self._add_column(conn, f"{name}_{i}", db_type)
                 else:
-                    self._add_column(conn, name)
+                    self._add_column(conn, name, db_type)
 
             t = f"{_qi(self.schema)}.{_qi(self.table)}"
             n_inserted = 0
@@ -165,21 +213,22 @@ class DBWriter:
                     col_names.append("source_file")
                     values.append(source_file)
 
-                for name, val in rows_fields:
+                for name, val, db_type in rows_fields:
                     col_names.append(name)
                     if isinstance(val, list):
-                        values.append(str(val[row_idx]) if row_idx < len(val) else None)
+                        v = val[row_idx] if row_idx < len(val) else None
+                        values.append(_cast_value(v, db_type))
                     else:
-                        values.append(str(val) if val is not None else None)
+                        values.append(_cast_value(val, db_type))
 
-                for name, val in cols_fields:
+                for name, val, db_type in cols_fields:
                     if isinstance(val, list):
                         for i, v in enumerate(val, 1):
                             col_names.append(f"{name}_{i}")
-                            values.append(str(v) if v is not None else None)
+                            values.append(_cast_value(v, db_type))
                     else:
                         col_names.append(name)
-                        values.append(str(val) if val is not None else None)
+                        values.append(_cast_value(val, db_type))
 
                 cols_sql = ", ".join(_qi(c) for c in col_names)
                 placeholders = ", ".join("%s" for _ in col_names)

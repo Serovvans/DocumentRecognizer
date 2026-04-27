@@ -41,7 +41,7 @@ code { font-family: ui-monospace, monospace; font-size: .88em; background: var(-
   box-shadow: 0 1px 4px rgba(0,0,0,.06);
 }
 .header-inner {
-  max-width: 900px; margin: 0 auto;
+  max-width: 1260px; margin: 0 auto;
   padding: 0 24px;
   display: flex; align-items: center; gap: 24px;
   height: 60px;
@@ -89,7 +89,7 @@ code { font-family: ui-monospace, monospace; font-size: .88em; background: var(-
 }
 
 /* ── Main ────────────────────────────────────────────── */
-.main { max-width: 900px; margin: 0 auto; padding: 28px 24px 60px; }
+.main { max-width: 1260px; margin: 0 auto; padding: 28px 24px 60px; }
 
 /* ── Pages ───────────────────────────────────────────── */
 .page { display: flex; flex-direction: column; gap: 20px; }
@@ -179,7 +179,7 @@ code { font-family: ui-monospace, monospace; font-size: .88em; background: var(-
 
 /* ── Fields table ────────────────────────────────────── */
 .fields-table-head {
-  display: grid; grid-template-columns: 1fr 1.5fr 112px 32px;
+  display: grid; grid-template-columns: 1fr 1.5fr 112px 90px 32px;
   gap: 8px; padding: 6px 4px;
   font-size: 12px; font-weight: 600; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: .04em;
@@ -187,7 +187,7 @@ code { font-family: ui-monospace, monospace; font-size: .88em; background: var(-
   margin: 14px 0 6px;
 }
 .field-row {
-  display: grid; grid-template-columns: 1fr 1.5fr 112px 32px;
+  display: grid; grid-template-columns: 1fr 1.5fr 112px 90px 32px;
   gap: 8px; align-items: center;
   padding: 5px 0;
   border-bottom: 1px solid var(--border);

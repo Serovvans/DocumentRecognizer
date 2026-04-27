@@ -60,7 +60,7 @@ async function scanFolder() {
 }
 
 // ── Field editor ───────────────────────────────────────────────────
-function addField(name = '', desc = '', multiMode = 'rows') {
+function addField(name = '', desc = '', multiMode = 'rows', dbType = 'text') {
   const id = ++_fieldCounter;
   const row = document.createElement('div');
   row.className = 'field-row';
@@ -71,6 +71,12 @@ function addField(name = '', desc = '', multiMode = 'rows') {
     <select class="select-field fm">
       <option value="rows"   ${multiMode === 'rows'    ? 'selected' : ''}>Строки</option>
       <option value="columns"${multiMode === 'columns' ? 'selected' : ''}>Столбцы _N</option>
+    </select>
+    <select class="select-field ft">
+      <option value="text"   ${dbType === 'text'    ? 'selected' : ''}>TEXT</option>
+      <option value="double" ${dbType === 'double'  ? 'selected' : ''}>DOUBLE</option>
+      <option value="integer"${dbType === 'integer' ? 'selected' : ''}>INTEGER</option>
+      <option value="date"   ${dbType === 'date'    ? 'selected' : ''}>DATE</option>
     </select>
     <button class="btn-icon" onclick="removeField(${id})" title="Удалить">×</button>
   `;
@@ -91,6 +97,7 @@ function getFields() {
       name:             r.querySelector('.fn').value.trim(),
       description:      r.querySelector('.fd').value.trim(),
       multi_value_mode: r.querySelector('.fm').value,
+      db_type:          r.querySelector('.ft').value,
     }))
     .filter(f => f.name);
 }
@@ -120,7 +127,7 @@ function loadPreset() {
 
   $('fields-list').innerHTML = '';
   _fieldCounter = 0;
-  data.fields.forEach(f => addField(f.name, f.description || '', f.multi_value_mode || 'rows'));
+  data.fields.forEach(f => addField(f.name, f.description || '', f.multi_value_mode || 'rows', f.db_type || 'text'));
   toast(`Пресет «${name}» загружен`);
 }
 
