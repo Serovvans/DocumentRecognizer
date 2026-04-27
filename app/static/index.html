@@ -132,6 +132,28 @@
         </div>
       </div>
 
+      <!-- Per-field extraction -->
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
+              <line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/>
+              <line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            Извлечение по одному полю
+          </h2>
+          <label class="toggle">
+            <input type="checkbox" id="per-field-toggle" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <p class="hint-text" style="margin-top:8px">
+          Каждое поле извлекается отдельным запросом к модели (параллельно).
+          Снижает вероятность пропуска полей в длинных документах, но увеличивает число запросов.
+        </p>
+      </div>
+
       <!-- DB -->
       <div class="card">
         <div class="card-head">

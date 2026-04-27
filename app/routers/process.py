@@ -86,6 +86,7 @@ async def process_ws(websocket: WebSocket):
             output_path=str(output_path),
             db_writer=db_writer,
             classification_prompt=config.get("classification_prompt", ""),
+            per_field=config.get("per_field", False),
         ),
     )
 

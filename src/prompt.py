@@ -75,6 +75,24 @@ def build_classification_user_prompt(
     return "\n\n".join(parts)
 
 
+def build_single_field_system_prompt(field_name: str, field_description: str = "") -> str:
+    desc_line = f"\nОписание поля: {field_description}" if field_description else ""
+    return f"""Ты — система извлечения структурированных данных. Тебе передан текст, распознанный с отсканированного документа.
+
+Извлеки значение одного поля: «{field_name}»{desc_line}
+
+Правила:
+- Если поле присутствует только один раз, верни строку: "значение".
+- Если поле встречается несколько раз (например, при продлении или исправлении), верни список в хронологическом порядке: ["значение 1", "значение 2"].
+- Если поле отсутствует в документе, верни null.
+- Верни только JSON-объект с единственным ключом, точно совпадающим с названием поля (включая регистр и знаки препинания).
+- Без каких-либо пояснений. Пример ответа: {{"{field_name}": "значение"}}"""
+
+
+def build_single_field_user_prompt(field_name: str, ocr_text: str) -> str:
+    return f"Извлеки поле «{field_name}» из следующего распознанного текста документа:\n\n{ocr_text}"
+
+
 def build_json_fix_prompt(parse_error: str) -> str:
     error_line = f"\nОшибка парсинга: {parse_error}" if parse_error else ""
     return (

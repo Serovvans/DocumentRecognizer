@@ -17,6 +17,7 @@ def process_documents(
     output_path: str,
     db_writer=None,
     classification_prompt: str = "",
+    per_field: bool = False,
 ) -> None:
     """
     Process *pdf_paths* in parallel, stream progress via *callback*, write
@@ -57,6 +58,7 @@ def process_documents(
                 ocr_model=OCR_MODEL,
                 extraction_model=EXTRACTION_MODEL,
                 classification_prompt=classification_prompt,
+                per_field=per_field,
             )
             return pdf_path, result, None, None
         except DocumentRejected as exc:

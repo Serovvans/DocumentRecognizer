@@ -1,4 +1,5 @@
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
@@ -11,6 +12,8 @@ from .prompt import (
     build_extraction_system_prompt,
     build_extraction_system_prompt_dynamic,
     build_extraction_user_prompt,
+    build_single_field_system_prompt,
+    build_single_field_user_prompt,
     build_classification_system_prompt,
     build_classification_user_prompt,
     build_json_fix_prompt,
@@ -131,6 +134,54 @@ def extract_fields(pdf_path: str, log: Callable[[str], None] = _default_log) -> 
     return _extract_with_retry(messages, EXTRACTION_MODEL, prefix, log)
 
 
+_FIELD_WORKERS = 8
+
+
+def _extract_single_field(
+    field_name: str,
+    field_description: str,
+    ocr_text: str,
+    model: str,
+    prefix: str,
+    log: Callable[[str], None],
+) -> object:
+    """Extract one field from OCR text; returns the field value (str, list, or None)."""
+    messages = [
+        {"role": "system", "content": build_single_field_system_prompt(field_name, field_description)},
+        {"role": "user", "content": build_single_field_user_prompt(field_name, ocr_text)},
+    ]
+    result = _extract_with_retry(messages, model, prefix, log)
+    return result.get(field_name)
+
+
+def _extract_fields_per_field(
+    ocr_text: str,
+    fields: list[dict],
+    model: str,
+    prefix: str,
+    log: Callable[[str], None],
+) -> dict:
+    """Extract each field in a separate LLM call, parallelised."""
+    result: dict[str, object] = {}
+    lock = threading.Lock()
+
+    def _task(field: dict) -> None:
+        name = field["name"]
+        desc = field.get("description", "")
+        log(f"{prefix}  Извлечение поля «{name}»...")
+        value = _extract_single_field(name, desc, ocr_text, model, prefix, log)
+        with lock:
+            result[name] = value
+
+    with ThreadPoolExecutor(max_workers=_FIELD_WORKERS) as pool:
+        futures = [pool.submit(_task, f) for f in fields]
+        for future in as_completed(futures):
+            future.result()  # propagate exceptions
+
+    # preserve original field order
+    return {f["name"]: result[f["name"]] for f in fields}
+
+
 def _classify_document(
     ocr_text: str,
     classification_prompt: str,
@@ -171,11 +222,16 @@ def extract_fields_dynamic(
     ocr_model: str = OCR_MODEL,
     extraction_model: str = EXTRACTION_MODEL,
     classification_prompt: str = "",
+    per_field: bool = False,
 ) -> dict:
     """Like extract_fields but uses caller-supplied field definitions and models.
 
     If *classification_prompt* is provided, a classification step runs after OCR.
     Raises DocumentRejected if the document does not match the prompt.
+
+    If *per_field* is True, each field is extracted in a separate LLM call
+    (parallelised). This reduces the chance of fields being silently skipped
+    when the model has to handle many fields at once.
     """
     prefix = f"[{pdf_path}] "
     log(f"{prefix}Конвертация PDF в изображения...")
@@ -188,6 +244,10 @@ def extract_fields_dynamic(
 
     if classification_prompt.strip():
         _classify_document(combined_ocr, classification_prompt, prefix, log, model=extraction_model, fields=fields)
+
+    if per_field:
+        log(f"{prefix}Этап 2: извлечение полей по одному (per-field) моделью {extraction_model}...")
+        return _extract_fields_per_field(combined_ocr, fields, extraction_model, prefix, log)
 
     log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
     messages = [

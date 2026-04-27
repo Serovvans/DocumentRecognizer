@@ -184,6 +184,7 @@ function startProcessing() {
     classification_prompt: $('filter-toggle').checked
       ? $('filter-prompt').value.trim()
       : '',
+    per_field: $('per-field-toggle').checked,
   };
 
   // Reset processing page
