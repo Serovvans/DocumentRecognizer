@@ -22,6 +22,32 @@ from .json_utils import extract_json, get_last_parse_error
 
 _MAX_JSON_RETRIES = 3
 
+_NULL_LIKE_VALUES = frozenset({
+    "нет", "не указано", "не найдено", "отсутствует", "отсутствует в документе",
+    "нет данных", "не определено", "не установлено", "не указан", "не указана",
+    "н/д", "нд", "-", "—", "",
+})
+
+
+def _postprocess(result: dict, field_names: list) -> dict:
+    """Ensure all fields present; replace null-like strings with None; unwrap single-element lists."""
+    out: dict = {}
+    for name in field_names:
+        val = result.get(name)
+        if isinstance(val, list):
+            cleaned = [v for v in val if not (isinstance(v, str) and v.strip().lower() in _NULL_LIKE_VALUES)]
+            if not cleaned:
+                out[name] = None
+            elif len(cleaned) == 1:
+                out[name] = cleaned[0]
+            else:
+                out[name] = cleaned
+        elif isinstance(val, str) and val.strip().lower() in _NULL_LIKE_VALUES:
+            out[name] = None
+        else:
+            out[name] = val
+    return out
+
 
 class DocumentRejected(Exception):
     """Raised when a document does not match the user-supplied classification filter."""
@@ -131,7 +157,8 @@ def extract_fields(pdf_path: str, log: Callable[[str], None] = _default_log) -> 
         {"role": "system", "content": build_extraction_system_prompt()},
         {"role": "user", "content": build_extraction_user_prompt(combined_ocr)},
     ]
-    return _extract_with_retry(messages, EXTRACTION_MODEL, prefix, log)
+    raw = _extract_with_retry(messages, EXTRACTION_MODEL, prefix, log)
+    return _postprocess(raw, FIELDS)
 
 
 _FIELD_WORKERS = 8
@@ -245,13 +272,17 @@ def extract_fields_dynamic(
     if classification_prompt.strip():
         _classify_document(combined_ocr, classification_prompt, prefix, log, model=extraction_model, fields=fields)
 
+    field_names = [f["name"] for f in fields]
+
     if per_field:
         log(f"{prefix}Этап 2: извлечение полей по одному (per-field) моделью {extraction_model}...")
-        return _extract_fields_per_field(combined_ocr, fields, extraction_model, prefix, log)
+        raw = _extract_fields_per_field(combined_ocr, fields, extraction_model, prefix, log)
+        return _postprocess(raw, field_names)
 
     log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
     messages = [
         {"role": "system", "content": build_extraction_system_prompt_dynamic(fields)},
         {"role": "user", "content": build_extraction_user_prompt(combined_ocr)},
     ]
-    return _extract_with_retry(messages, extraction_model, prefix, log)
+    raw = _extract_with_retry(messages, extraction_model, prefix, log)
+    return _postprocess(raw, field_names)
