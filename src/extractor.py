@@ -1,3 +1,4 @@
+import re
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -21,6 +22,11 @@ from .prompt import (
 from .json_utils import extract_json, get_last_parse_error
 
 _MAX_JSON_RETRIES = 3
+
+_VALID_RU_MONTHS = frozenset({
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+})
 
 _NULL_LIKE_VALUES = frozenset({
     "нет", "не указано", "не найдено", "отсутствует", "отсутствует в документе",
@@ -62,6 +68,32 @@ def _postprocess(result: dict, fields: list) -> dict:
         else:
             out[name] = val
     return out
+
+
+def _has_handwriting_issues(data: dict, fields: list) -> bool:
+    """Return True if extracted date fields show signs of handwriting OCR errors.
+
+    Checks for: garbled month names (e.g. "месл" instead of "июля") and
+    year digits split by spaces (e.g. "20 19" instead of "2019").
+    Only applied to fields with db_type == "date" to avoid false positives.
+    """
+    for field in fields:
+        if isinstance(field, str) or field.get("db_type") != "date":
+            continue
+        name = field["name"]
+        val = data.get(name)
+        if val is None:
+            continue
+        vals = val if isinstance(val, list) else [val]
+        for v in vals:
+            if not isinstance(v, str):
+                continue
+            if re.search(r'\d\s+\d', v):
+                return True
+            for word in re.findall(r'[а-яёА-ЯЁ]{3,}', v.lower()):
+                if word not in _VALID_RU_MONTHS:
+                    return True
+    return False
 
 
 class DocumentRejected(Exception):
@@ -292,7 +324,9 @@ def extract_fields_dynamic(
     if per_field:
         log(f"{prefix}Этап 2: извлечение полей по одному (per-field) моделью {extraction_model}...")
         raw = _extract_fields_per_field(combined_ocr, fields, extraction_model, prefix, log)
-        return _postprocess(raw, fields)
+        result = _postprocess(raw, fields)
+        result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+        return result
 
     log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
     messages = [
@@ -300,4 +334,6 @@ def extract_fields_dynamic(
         {"role": "user", "content": build_extraction_user_prompt(combined_ocr)},
     ]
     raw = _extract_with_retry(messages, extraction_model, prefix, log)
-    return _postprocess(raw, fields)
+    result = _postprocess(raw, fields)
+    result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+    return result

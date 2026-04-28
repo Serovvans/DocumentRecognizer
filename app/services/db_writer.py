@@ -137,7 +137,11 @@ class DBWriter:
     # ── schema management ────────────────────────────────────────────────────
 
     def _ensure_columns(self) -> None:
-        """Add fixed columns (source_file + all "rows" mode fields) at startup."""
+        """Add fixed columns (source_file + all "rows" mode fields) at startup.
+
+        Also drops NOT NULL constraints from managed columns so that documents
+        with missing fields can still be inserted.
+        """
         t = f"{_qi(self.schema)}.{_qi(self.table)}"
         conn = self._pool.getconn()
         try:
@@ -145,6 +149,9 @@ class DBWriter:
                 if self.save_source:
                     cur.execute(
                         f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi('source_file')} TEXT"
+                    )
+                    cur.execute(
+                        f"ALTER TABLE {t} ALTER COLUMN {_qi('source_file')} DROP NOT NULL"
                     )
                     self._known_columns.add("source_file")
                 for field in self.fields:
@@ -154,7 +161,18 @@ class DBWriter:
                         cur.execute(
                             f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(name)} {col_type}"
                         )
+                        cur.execute(
+                            f"ALTER TABLE {t} ALTER COLUMN {_qi(name)} DROP NOT NULL"
+                        )
                         self._known_columns.add(name)
+                # Handwriting quality flag
+                cur.execute(
+                    f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi('has_handwriting_issues')} BOOLEAN"
+                )
+                cur.execute(
+                    f"ALTER TABLE {t} ALTER COLUMN {_qi('has_handwriting_issues')} DROP NOT NULL"
+                )
+                self._known_columns.add("has_handwriting_issues")
             conn.commit()
         finally:
             self._pool.putconn(conn)
@@ -212,6 +230,11 @@ class DBWriter:
                 if self.save_source:
                     col_names.append("source_file")
                     values.append(source_file)
+
+                if "has_handwriting_issues" in data:
+                    col_names.append("has_handwriting_issues")
+                    flag = data["has_handwriting_issues"]
+                    values.append(bool(flag) if flag is not None else None)
 
                 for name, val, db_type in rows_fields:
                     col_names.append(name)
