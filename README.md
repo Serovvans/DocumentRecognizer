@@ -107,10 +107,10 @@ source .venv/bin/activate        # macOS/Linux
 # .venv\Scripts\activate         # Windows
 
 # запустить сервер
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8007
 ```
 
-Откройте браузер: **http://localhost:8000**
+Откройте браузер: **http://localhost:8007**
 
 ---
 
