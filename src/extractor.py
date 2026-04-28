@@ -29,15 +29,30 @@ _NULL_LIKE_VALUES = frozenset({
 })
 
 
-def _postprocess(result: dict, field_names: list) -> dict:
-    """Ensure all fields present; replace null-like strings with None; unwrap single-element lists."""
+def _postprocess(result: dict, fields: list) -> dict:
+    """Ensure all fields present; replace null-like strings with None; unwrap lists.
+
+    *fields* may be a list of str (legacy) or a list of dicts with 'name' and
+    optional 'allow_list' (bool, default False).  When allow_list is False and
+    the model returned a list, only the first non-null element is kept — this
+    prevents hallucinated multi-values for inherently single-value fields.
+    """
     out: dict = {}
-    for name in field_names:
+    for f in fields:
+        if isinstance(f, str):
+            name = f
+            allow_list = True  # legacy path: preserve existing behaviour
+        else:
+            name = f["name"]
+            allow_list = bool(f.get("allow_list", False))
+
         val = result.get(name)
         if isinstance(val, list):
             cleaned = [v for v in val if not (isinstance(v, str) and v.strip().lower() in _NULL_LIKE_VALUES)]
             if not cleaned:
                 out[name] = None
+            elif not allow_list:
+                out[name] = cleaned[0]
             elif len(cleaned) == 1:
                 out[name] = cleaned[0]
             else:
@@ -277,7 +292,7 @@ def extract_fields_dynamic(
     if per_field:
         log(f"{prefix}Этап 2: извлечение полей по одному (per-field) моделью {extraction_model}...")
         raw = _extract_fields_per_field(combined_ocr, fields, extraction_model, prefix, log)
-        return _postprocess(raw, field_names)
+        return _postprocess(raw, fields)
 
     log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
     messages = [
@@ -285,4 +300,4 @@ def extract_fields_dynamic(
         {"role": "user", "content": build_extraction_user_prompt(combined_ocr)},
     ]
     raw = _extract_with_retry(messages, extraction_model, prefix, log)
-    return _postprocess(raw, field_names)
+    return _postprocess(raw, fields)

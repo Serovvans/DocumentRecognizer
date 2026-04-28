@@ -12,6 +12,7 @@ class FieldDef(BaseModel):
     description: str = ""
     multi_value_mode: str = "rows"
     db_type: str = "text"
+    allow_list: bool = False
 
 
 class PresetPayload(BaseModel):
