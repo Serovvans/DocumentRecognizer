@@ -15,9 +15,13 @@ load_dotenv()
 EXTRACTION_BACKEND: str = os.getenv("EXTRACTION_BACKEND", "ollama")
 _GIGACHAT_CREDENTIALS: str = os.getenv("GIGACHAT_CREDENTIALS", "")
 
-_gigachat_lock = threading.Lock()
-_gigachat_instance = None
-_gigachat_instance_model: str = ""
+# Per-thread GigaChat instances to avoid shared-state concurrency issues
+_gigachat_local = threading.local()
+
+# Serialise all GigaChat network calls: the library's token-refresh logic is
+# not thread-safe and concurrent invoke() calls on the same (or different)
+# instances cause indefinite hangs.
+_gigachat_call_lock = threading.Lock()
 
 
 def call_text_model(
@@ -32,7 +36,7 @@ def call_text_model(
     model:    Ollama model name when backend=ollama; GigaChat model name when backend=gigachat
     """
     if EXTRACTION_BACKEND == "gigachat":
-        return _call_gigachat(messages, model)
+        return _call_gigachat(messages, model, log)
     return _call_ollama(messages, model, log, max_tokens)
 
 
@@ -61,22 +65,28 @@ def _call_ollama(
     return text
 
 
-def _call_gigachat(messages: list[dict], model: str) -> str:
-    global _gigachat_instance, _gigachat_instance_model
+def _get_gigachat_instance(model: str):
+    """Return a per-thread GigaChat instance, creating it if needed."""
+    instance = getattr(_gigachat_local, "instance", None)
+    instance_model = getattr(_gigachat_local, "model", "")
+    if instance is None or instance_model != model:
+        from langchain_community.chat_models import GigaChat  # type: ignore[import]
 
-    with _gigachat_lock:
-        if _gigachat_instance is None or _gigachat_instance_model != model:
-            from langchain_community.chat_models import GigaChat  # type: ignore[import]
+        _gigachat_local.instance = GigaChat(
+            model=model,
+            credentials=_GIGACHAT_CREDENTIALS,
+            verify_ssl_certs=False,
+            temperature=0,
+        )
+        _gigachat_local.model = model
+    return _gigachat_local.instance
 
-            _gigachat_instance = GigaChat(
-                model=model,
-                credentials=_GIGACHAT_CREDENTIALS,
-                verify_ssl_certs=False,
-                temperature=0,
-            )
-            _gigachat_instance_model = model
-        llm = _gigachat_instance
 
+def _call_gigachat(
+    messages: list[dict],
+    model: str,
+    log: Callable[[str], None] | None = None,
+) -> str:
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage  # type: ignore[import]
 
     lc_messages = []
@@ -89,5 +99,12 @@ def _call_gigachat(messages: list[dict], model: str) -> str:
         elif role == "assistant":
             lc_messages.append(AIMessage(content=content))
 
-    response = llm.invoke(lc_messages)
-    return response.content or ""
+    llm = _get_gigachat_instance(model)
+    try:
+        with _gigachat_call_lock:
+            response = llm.invoke(lc_messages)
+        return response.content or ""
+    except Exception as exc:
+        if log:
+            log(f"[GigaChat] Ошибка вызова: {exc}")
+        raise
