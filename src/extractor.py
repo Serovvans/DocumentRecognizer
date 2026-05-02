@@ -6,7 +6,8 @@ from typing import Callable
 
 from ollama import chat
 
-from .config import OCR_MODEL, EXTRACTION_MODEL, OCR_PAGE_WORKERS
+from .config import OCR_MODEL, EFFECTIVE_EXTRACTION_MODEL, OCR_PAGE_WORKERS
+from .llm import call_text_model
 from .pdf_utils import pdf_to_images_base64
 from .prompt import (
     build_ocr_prompt,
@@ -112,15 +113,11 @@ def _extract_with_retry(
     log: Callable[[str], None],
 ) -> dict:
     for attempt in range(_MAX_JSON_RETRIES):
-        response = chat(model=model, messages=messages, options=_EXTRACT_OPTIONS)
-        text = response.message.content or ""
-        if not text.strip() and response.message.thinking:
-            log(f"{prefix}content пустой, используем thinking как fallback")
-            text = response.message.thinking or ""
+        text = call_text_model(messages, model, log=log)
         log(f"{prefix}--- Сырой ответ модели (попытка {attempt + 1}) ---\n{text}\n{prefix}--- Конец ответа ---")
         try:
             return extract_json(text)
-        except ValueError as e:
+        except ValueError:
             if attempt == _MAX_JSON_RETRIES - 1:
                 raise
             parse_error = get_last_parse_error(text)
@@ -134,12 +131,6 @@ _OCR_OPTIONS = {
     "temperature": 0,
     "num_batch": 2048,
     "num_predict": 3072,
-}
-
-_EXTRACT_OPTIONS = {
-    "temperature": 0,
-    "num_batch": 2048,
-    "num_predict": 2048,
 }
 
 
@@ -199,12 +190,12 @@ def extract_fields(pdf_path: str, log: Callable[[str], None] = _default_log) -> 
     combined_ocr = "\n\n".join(page_texts)
     log(f"{prefix}--- Результат OCR ---\n{combined_ocr}\n{prefix}--- Конец OCR ---")
 
-    log(f"{prefix}Этап 2: извлечение полей моделью {EXTRACTION_MODEL}...")
+    log(f"{prefix}Этап 2: извлечение полей моделью {EFFECTIVE_EXTRACTION_MODEL}...")
     messages = [
         {"role": "system", "content": build_extraction_system_prompt()},
         {"role": "user", "content": build_extraction_user_prompt(combined_ocr)},
     ]
-    raw = _extract_with_retry(messages, EXTRACTION_MODEL, prefix, log)
+    raw = _extract_with_retry(messages, EFFECTIVE_EXTRACTION_MODEL, prefix, log)
     return _postprocess(raw, FIELDS)
 
 
@@ -261,20 +252,19 @@ def _classify_document(
     classification_prompt: str,
     prefix: str,
     log: Callable[[str], None],
-    model: str = EXTRACTION_MODEL,
+    model: str = EFFECTIVE_EXTRACTION_MODEL,
     fields: list[dict] | None = None,
 ) -> None:
     """Check document relevance; raises DocumentRejected if the document does not match."""
     log(f"{prefix}Классификация документа моделью {model}...")
-    response = chat(
-        model=model,
+    text = call_text_model(
         messages=[
             {"role": "system", "content": build_classification_system_prompt()},
             {"role": "user", "content": build_classification_user_prompt(classification_prompt, ocr_text, fields)},
         ],
-        options={**_EXTRACT_OPTIONS, "num_predict": 256},
+        model=model,
+        max_tokens=256,
     )
-    text = response.message.content or ""
     try:
         data = extract_json(text)
         relevant = bool(data.get("relevant", True))
@@ -294,7 +284,7 @@ def extract_fields_dynamic(
     fields: list[dict],
     log: Callable[[str], None] = _default_log,
     ocr_model: str = OCR_MODEL,
-    extraction_model: str = EXTRACTION_MODEL,
+    extraction_model: str = EFFECTIVE_EXTRACTION_MODEL,
     classification_prompt: str = "",
     per_field: bool = False,
 ) -> dict:

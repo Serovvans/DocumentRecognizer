@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
-from app.config import OCR_MODEL, EXTRACTION_MODEL
+from app.config import OCR_MODEL, EFFECTIVE_EXTRACTION_MODEL
 from src.extractor import extract_fields_dynamic, DocumentRejected
 
 
@@ -56,7 +56,7 @@ def process_documents(
                 pdf_path,
                 fields,
                 ocr_model=OCR_MODEL,
-                extraction_model=EXTRACTION_MODEL,
+                extraction_model=EFFECTIVE_EXTRACTION_MODEL,
                 classification_prompt=classification_prompt,
                 per_field=per_field,
             )

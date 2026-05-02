@@ -15,3 +15,8 @@ paramiko>=3.0.0,<4.0.0
 
 # Config
 python-dotenv>=1.0.0
+
+# GigaChat extraction backend (optional; needed when EXTRACTION_BACKEND=gigachat)
+langchain-community>=0.2.0
+langchain-core>=0.2.0
+gigachat>=0.1.15

@@ -1,6 +1,21 @@
-OLLAMA_BASE_URL = "http://localhost:11434"
-OCR_MODEL = "glm-ocr"
-EXTRACTION_MODEL = "llama3.1:8b"
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OCR_MODEL: str = os.getenv("OCR_MODEL", "glm-ocr")
+EXTRACTION_MODEL: str = os.getenv("EXTRACTION_MODEL", "llama3.1:8b")
+
+# "ollama" uses local Ollama models; "gigachat" uses GigaChat API via LangChain
+EXTRACTION_BACKEND: str = os.getenv("EXTRACTION_BACKEND", "ollama")
+GIGACHAT_MODEL: str = os.getenv("GIGACHAT_MODEL", "GigaChat-2")
+
+# Resolved extraction model name passed to the LLM backend
+EFFECTIVE_EXTRACTION_MODEL: str = (
+    GIGACHAT_MODEL if EXTRACTION_BACKEND == "gigachat" else EXTRACTION_MODEL
+)
 
 # Число документов, обрабатываемых параллельно
 MAX_WORKERS = 4
