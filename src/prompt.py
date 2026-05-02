@@ -21,11 +21,7 @@ def build_extraction_system_prompt_dynamic(fields: list[dict]) -> str:
 
 
 def build_ocr_prompt() -> str:
-    return (
-        "Распознай весь текст и все таблицы на этой странице документа. "
-        "Выведи только распознанное содержимое страницы без каких-либо пояснений, "
-        "сохраняя структуру таблиц в текстовом виде."
-    )
+    return "Table Recognition: "
 
 
 def build_extraction_system_prompt() -> str:
