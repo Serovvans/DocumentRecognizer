@@ -81,6 +81,7 @@ async def process_ws(websocket: WebSocket):
         lambda: process_documents(
             pdf_paths=config.get("files", []),
             fields=config.get("fields", []),
+            sections=config.get("sections", []),
             workers=config.get("workers", 2),
             callback=callback,
             output_path=str(output_path),

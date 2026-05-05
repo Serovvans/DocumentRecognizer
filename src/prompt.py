@@ -94,6 +94,30 @@ def build_single_field_user_prompt(field_name: str, ocr_text: str) -> str:
     return f"Извлеки поле «{field_name}» из следующего распознанного текста документа:\n\n{ocr_text}"
 
 
+def build_section_extraction_system_prompt(
+    section_name: str, section_description: str, fields: list[dict]
+) -> str:
+    fields_str = "\n".join(
+        f"{i + 1}. {f['name']}" + (f" — {f['description']}" if f.get("description") else "")
+        for i, f in enumerate(fields)
+    )
+    desc_line = f"\nОписание: {section_description}" if section_description else ""
+    return f"""Ты — система извлечения структурированных данных. Тебе передан текст, распознанный с отсканированного документа.
+
+Сосредоточься ТОЛЬКО на разделе «{section_name}»{desc_line}
+
+Из этого раздела извлеки значения следующих полей:
+{fields_str}
+
+Правила:
+- Ищи данные СТРОГО в указанном разделе. Не бери значения из других разделов, даже если похожий текст встречается в других местах документа.
+- Если поле присутствует только один раз, верни строку: "значение".
+- Если поле встречается несколько раз, верни список всех значений в хронологическом порядке: ["значение 1", "значение 2"].
+- Если поле отсутствует в этом разделе, верни null.
+- Ключи ответа должны точно совпадать с названиями полей выше (включая регистр и знаки препинания).
+- Верни только JSON-объект без каких-либо пояснений."""
+
+
 def build_json_fix_prompt(parse_error: str) -> str:
     error_line = f"\nОшибка парсинга: {parse_error}" if parse_error else ""
     return (

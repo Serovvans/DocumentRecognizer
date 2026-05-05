@@ -15,9 +15,16 @@ class FieldDef(BaseModel):
     allow_list: bool = False
 
 
+class SectionDef(BaseModel):
+    name: str
+    description: str = ""
+    fields: list[FieldDef] = []
+
+
 class PresetPayload(BaseModel):
     name: str
-    fields: list[FieldDef]
+    fields: list[FieldDef] = []
+    sections: list[SectionDef] = []
 
 
 @router.get("/presets")
@@ -26,7 +33,11 @@ async def list_presets():
     for path in sorted(PRESETS_DIR.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            result.append({"name": path.stem, "fields": data.get("fields", [])})
+            result.append({
+                "name": path.stem,
+                "fields": data.get("fields", []),
+                "sections": data.get("sections", []),
+            })
         except Exception:
             pass
     return result
@@ -36,14 +47,14 @@ async def list_presets():
 async def save_preset(payload: PresetPayload):
     PRESETS_DIR.mkdir(exist_ok=True)
     path = PRESETS_DIR / f"{payload.name}.json"
-    path.write_text(
-        json.dumps(
-            {"fields": [f.model_dump() for f in payload.fields]},
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    data: dict = {}
+    if payload.sections:
+        data["sections"] = [s.model_dump() for s in payload.sections]
+    if payload.fields:
+        data["fields"] = [f.model_dump() for f in payload.fields]
+    if not data:
+        data["fields"] = []
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"ok": True}
 
 

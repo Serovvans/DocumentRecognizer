@@ -18,6 +18,7 @@ def process_documents(
     db_writer=None,
     classification_prompt: str = "",
     per_field: bool = False,
+    sections: list[dict] | None = None,
 ) -> None:
     """
     Process *pdf_paths* in parallel, stream progress via *callback*, write
@@ -59,6 +60,7 @@ def process_documents(
                 extraction_model=EFFECTIVE_EXTRACTION_MODEL,
                 classification_prompt=classification_prompt,
                 per_field=per_field,
+                sections=sections or [],
             )
             return pdf_path, result, None, None
         except DocumentRejected as exc:

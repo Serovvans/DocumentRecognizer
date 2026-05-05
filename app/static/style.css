@@ -213,6 +213,33 @@ code { font-family: ui-monospace, monospace; font-size: .88em; background: var(-
 }
 .btn-icon:hover { background: var(--error-bg); color: var(--error); }
 .mt-12 { margin-top: 12px; }
+.mt-8  { margin-top: 8px; }
+
+/* ── Section blocks ──────────────────────────────────── */
+.section-block {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.section-block:last-child { margin-bottom: 0; }
+.section-head {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.section-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-head-row .sn { flex: 1; font-weight: 500; }
+.section-head .sd { font-size: 13px; resize: vertical; }
+.section-fields { padding: 10px 14px 14px; }
+.section-fields .fields-table-head { margin-top: 4px; }
 
 /* ── Settings row ────────────────────────────────────── */
 .setting-row {

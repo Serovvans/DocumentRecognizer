@@ -14,6 +14,7 @@ from .prompt import (
     build_extraction_system_prompt,
     build_extraction_system_prompt_dynamic,
     build_extraction_user_prompt,
+    build_section_extraction_system_prompt,
     build_single_field_system_prompt,
     build_single_field_user_prompt,
     build_classification_system_prompt,
@@ -247,6 +248,52 @@ def _extract_fields_per_field(
     return {f["name"]: result[f["name"]] for f in fields}
 
 
+def _extract_section(
+    section_name: str,
+    section_description: str,
+    fields: list[dict],
+    ocr_text: str,
+    model: str,
+    prefix: str,
+    log: Callable[[str], None],
+) -> dict:
+    messages = [
+        {"role": "system", "content": build_section_extraction_system_prompt(section_name, section_description, fields)},
+        {"role": "user", "content": build_extraction_user_prompt(ocr_text)},
+    ]
+    return _extract_with_retry(messages, model, prefix, log)
+
+
+def _extract_fields_by_sections(
+    ocr_text: str,
+    sections: list[dict],
+    model: str,
+    prefix: str,
+    log: Callable[[str], None],
+) -> dict:
+    """Extract fields section by section, parallelised across sections."""
+    result: dict[str, object] = {}
+    lock = threading.Lock()
+
+    def _task(section: dict) -> None:
+        fields = section.get("fields", [])
+        if not fields:
+            return
+        name = section["name"]
+        desc = section.get("description", "")
+        log(f"{prefix}  Раздел «{name}» ({len(fields)} полей)...")
+        raw = _extract_section(name, desc, fields, ocr_text, model, prefix, log)
+        with lock:
+            result.update(raw)
+
+    with ThreadPoolExecutor(max_workers=_FIELD_WORKERS) as pool:
+        futures = [pool.submit(_task, s) for s in sections]
+        for future in as_completed(futures):
+            future.result()
+
+    return result
+
+
 def _classify_document(
     ocr_text: str,
     classification_prompt: str,
@@ -287,6 +334,7 @@ def extract_fields_dynamic(
     extraction_model: str = EFFECTIVE_EXTRACTION_MODEL,
     classification_prompt: str = "",
     per_field: bool = False,
+    sections: list[dict] | None = None,
 ) -> dict:
     """Like extract_fields but uses caller-supplied field definitions and models.
 
@@ -308,6 +356,13 @@ def extract_fields_dynamic(
 
     if classification_prompt.strip():
         _classify_document(combined_ocr, classification_prompt, prefix, log, model=extraction_model, fields=fields)
+
+    if sections:
+        log(f"{prefix}Этап 2: извлечение по {len(sections)} разделам моделью {extraction_model}...")
+        raw = _extract_fields_by_sections(combined_ocr, sections, extraction_model, prefix, log)
+        result = _postprocess(raw, fields)
+        result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+        return result
 
     field_names = [f["name"] for f in fields]
 

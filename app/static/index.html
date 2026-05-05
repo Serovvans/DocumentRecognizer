@@ -77,18 +77,29 @@
             <input type="text" id="preset-name" class="input input-sm" placeholder="Название пресета" />
             <button class="btn btn-sm btn-secondary" onclick="savePreset()">Сохранить</button>
             <button class="btn btn-sm btn-danger-ghost" onclick="deletePreset()">Удалить</button>
+            <div class="divider-v"></div>
+            <button id="mode-toggle-btn" class="btn btn-sm btn-secondary" onclick="toggleSectionsMode()">Режим разделов</button>
           </div>
         </div>
 
-        <div class="fields-table-head">
-          <span>Название поля</span>
-          <span>Описание / откуда брать</span>
-          <span>Список →</span>
-          <span>Тип в БД</span>
-          <span></span>
+        <!-- Flat field list (default) -->
+        <div id="flat-mode-area">
+          <div class="fields-table-head">
+            <span>Название поля</span>
+            <span>Описание / откуда брать</span>
+            <span>Список →</span>
+            <span>Тип в БД</span>
+            <span></span>
+          </div>
+          <div id="fields-list"></div>
+          <button class="btn btn-outline mt-12" onclick="addField()">+ Добавить поле</button>
         </div>
-        <div id="fields-list"></div>
-        <button class="btn btn-outline mt-12" onclick="addField()">+ Добавить поле</button>
+
+        <!-- Sections mode -->
+        <div id="sections-mode-area" class="hidden">
+          <div id="sections-list"></div>
+          <button class="btn btn-outline mt-12" onclick="addSection()">+ Добавить раздел</button>
+        </div>
       </div>
 
       <!-- Settings -->

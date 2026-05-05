@@ -6,9 +6,12 @@ const S = {
   sessionId: localStorage.getItem('drSessionId') || null,
   ws: null,
   errorsVisible: false,
+  sectionsMode: false,
 };
 
 let _fieldCounter = 0;
+let _sectionCounter = 0;
+let _secFieldCounters = {};
 
 // ── DOM helpers ────────────────────────────────────────────────────
 const $  = id => document.getElementById(id);
@@ -60,11 +63,11 @@ async function scanFolder() {
 }
 
 // ── Field editor ───────────────────────────────────────────────────
-function addField(name = '', desc = '', multiMode = 'rows', dbType = 'text') {
-  const id = ++_fieldCounter;
+function _makeFieldRow(id, name, desc, multiMode, dbType, allowList, removeCallback) {
   const row = document.createElement('div');
   row.className = 'field-row';
-  row.id = `fr-${id}`;
+  row.id = id;
+  row.dataset.allowList = allowList ? '1' : '0';
   row.innerHTML = `
     <input type="text" class="input fn" placeholder="Название поля"          value="${esc(name)}"/>
     <input type="text" class="input fd" placeholder="Описание / откуда брать" value="${esc(desc)}"/>
@@ -78,9 +81,27 @@ function addField(name = '', desc = '', multiMode = 'rows', dbType = 'text') {
       <option value="integer"${dbType === 'integer' ? 'selected' : ''}>INTEGER</option>
       <option value="date"   ${dbType === 'date'    ? 'selected' : ''}>DATE</option>
     </select>
-    <button class="btn-icon" onclick="removeField(${id})" title="Удалить">×</button>
+    <button class="btn-icon" title="Удалить">×</button>
   `;
   row.querySelector('.fn').addEventListener('input', checkStartEnabled);
+  row.querySelector('.btn-icon').addEventListener('click', removeCallback);
+  return row;
+}
+
+function _readFieldRow(r) {
+  return {
+    name:             r.querySelector('.fn').value.trim(),
+    description:      r.querySelector('.fd').value.trim(),
+    multi_value_mode: r.querySelector('.fm').value,
+    db_type:          r.querySelector('.ft').value,
+    allow_list:       r.dataset.allowList === '1',
+  };
+}
+
+function addField(name = '', desc = '', multiMode = 'rows', dbType = 'text', allowList = false) {
+  const id = ++_fieldCounter;
+  const rowId = `fr-${id}`;
+  const row = _makeFieldRow(rowId, name, desc, multiMode, dbType, allowList, () => removeField(id));
   $('fields-list').appendChild(row);
   checkStartEnabled();
 }
@@ -92,14 +113,119 @@ function removeField(id) {
 }
 
 function getFields() {
+  if (S.sectionsMode) {
+    return getSections().flatMap(s => s.fields);
+  }
   return Array.from($('fields-list').querySelectorAll('.field-row'))
-    .map(r => ({
-      name:             r.querySelector('.fn').value.trim(),
-      description:      r.querySelector('.fd').value.trim(),
-      multi_value_mode: r.querySelector('.fm').value,
-      db_type:          r.querySelector('.ft').value,
-    }))
+    .map(_readFieldRow)
     .filter(f => f.name);
+}
+
+// ── Sections editor ────────────────────────────────────────────────
+function addSection(name = '', desc = '', fields = []) {
+  const secId = ++_sectionCounter;
+  _secFieldCounters[secId] = 0;
+
+  const block = document.createElement('div');
+  block.className = 'section-block';
+  block.id = `sec-${secId}`;
+  block.innerHTML = `
+    <div class="section-head">
+      <div class="section-head-row">
+        <input type="text" class="input sn" placeholder="Название раздела" value="${esc(name)}"/>
+        <button class="btn-icon" title="Удалить раздел">×</button>
+      </div>
+      <textarea class="input sd" rows="2" placeholder="Описание раздела — как и где найти его в документе">${esc(desc)}</textarea>
+    </div>
+    <div class="section-fields">
+      <div class="fields-table-head">
+        <span>Название поля</span>
+        <span>Описание / откуда брать</span>
+        <span>Список →</span>
+        <span>Тип в БД</span>
+        <span></span>
+      </div>
+      <div class="section-fields-list" id="sfl-${secId}"></div>
+      <button class="btn btn-outline mt-8" data-sec="${secId}">+ Добавить поле</button>
+    </div>
+  `;
+  block.querySelector('.section-head-row .btn-icon').addEventListener('click', () => removeSection(secId));
+  block.querySelector('.sn').addEventListener('input', checkStartEnabled);
+  block.querySelector('[data-sec]').addEventListener('click', () => addFieldToSection(secId));
+  $('sections-list').appendChild(block);
+
+  fields.forEach(f => addFieldToSection(secId, f.name, f.description || '', f.multi_value_mode || 'rows', f.db_type || 'text', f.allow_list || false));
+  checkStartEnabled();
+}
+
+function removeSection(secId) {
+  const el = $(`sec-${secId}`);
+  if (el) el.remove();
+  delete _secFieldCounters[secId];
+  checkStartEnabled();
+}
+
+function addFieldToSection(secId, name = '', desc = '', multiMode = 'rows', dbType = 'text', allowList = false) {
+  const cnt = ++_secFieldCounters[secId];
+  const rowId = `sfr-${secId}-${cnt}`;
+  const list = $(`sfl-${secId}`);
+  const row = _makeFieldRow(rowId, name, desc, multiMode, dbType, allowList, () => {
+    const el = $(rowId);
+    if (el) el.remove();
+    checkStartEnabled();
+  });
+  list.appendChild(row);
+  checkStartEnabled();
+}
+
+function getSections() {
+  return Array.from($('sections-list').querySelectorAll('.section-block'))
+    .map(sec => ({
+      name:        sec.querySelector('.sn').value.trim(),
+      description: sec.querySelector('.sd').value.trim(),
+      fields:      Array.from(sec.querySelectorAll('.field-row')).map(_readFieldRow).filter(f => f.name),
+    }));
+}
+
+function enterSectionsMode() {
+  S.sectionsMode = true;
+  hide($('flat-mode-area'));
+  show($('sections-mode-area'));
+  $('mode-toggle-btn').textContent = 'Обычный режим';
+}
+
+function exitSectionsMode() {
+  S.sectionsMode = false;
+  show($('flat-mode-area'));
+  hide($('sections-mode-area'));
+  $('mode-toggle-btn').textContent = 'Режим разделов';
+}
+
+function toggleSectionsMode() {
+  if (S.sectionsMode) {
+    const allFields = getSections().flatMap(s => s.fields);
+    $('fields-list').innerHTML = '';
+    _fieldCounter = 0;
+    allFields.forEach(f => addField(f.name, f.description, f.multi_value_mode, f.db_type, f.allow_list));
+    $('sections-list').innerHTML = '';
+    _sectionCounter = 0;
+    _secFieldCounters = {};
+    exitSectionsMode();
+  } else {
+    const flatFields = getFields();
+    $('fields-list').innerHTML = '';
+    _fieldCounter = 0;
+    $('sections-list').innerHTML = '';
+    _sectionCounter = 0;
+    _secFieldCounters = {};
+    enterSectionsMode();
+    if (flatFields.length > 0) {
+      addSection('Все поля', '', flatFields);
+    } else {
+      addSection();
+    }
+  }
+  checkStartEnabled();
 }
 
 // ── Presets ────────────────────────────────────────────────────────
@@ -120,28 +246,47 @@ async function loadPresetsList() {
 }
 
 function loadPreset() {
-  const sel   = $('preset-select');
-  const name  = sel.value;
-  const data  = (sel._data || []).find(p => p.name === name);
+  const sel  = $('preset-select');
+  const name = sel.value;
+  const data = (sel._data || []).find(p => p.name === name);
   if (!data) { toast('Выберите пресет из списка'); return; }
 
   $('fields-list').innerHTML = '';
+  $('sections-list').innerHTML = '';
   _fieldCounter = 0;
-  data.fields.forEach(f => addField(f.name, f.description || '', f.multi_value_mode || 'rows', f.db_type || 'text'));
+  _sectionCounter = 0;
+  _secFieldCounters = {};
+
+  if (data.sections && data.sections.length > 0) {
+    if (!S.sectionsMode) enterSectionsMode();
+    data.sections.forEach(s => addSection(s.name, s.description || '', s.fields || []));
+  } else {
+    if (S.sectionsMode) exitSectionsMode();
+    (data.fields || []).forEach(f => addField(f.name, f.description || '', f.multi_value_mode || 'rows', f.db_type || 'text', f.allow_list || false));
+  }
   toast(`Пресет «${name}» загружен`);
 }
 
 async function savePreset() {
-  const name   = $('preset-name').value.trim();
-  const fields = getFields();
-  if (!name)           { toast('Введите название пресета');  return; }
-  if (!fields.length)  { toast('Добавьте хотя бы одно поле'); return; }
+  const name = $('preset-name').value.trim();
+  if (!name) { toast('Введите название пресета'); return; }
+
+  let payload;
+  if (S.sectionsMode) {
+    const sections = getSections();
+    if (!sections.some(s => s.fields.length > 0)) { toast('Добавьте хотя бы одно поле'); return; }
+    payload = { name, sections };
+  } else {
+    const fields = getFields();
+    if (!fields.length) { toast('Добавьте хотя бы одно поле'); return; }
+    payload = { name, fields };
+  }
 
   try {
     const res = await fetch('/api/presets', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, fields }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error();
     await loadPresetsList();
@@ -185,6 +330,7 @@ function startProcessing() {
   const config = {
     files:                 S.files,
     fields,
+    sections:              S.sectionsMode ? getSections() : [],
     workers:               parseInt($('workers-slider').value, 10),
     db_enabled:            $('db-toggle').checked,
     db_name:               $('db-name').value.trim(),
@@ -358,7 +504,11 @@ function resetApp() {
   $('folder-path').value   = '';
   $('scan-result').innerHTML = '';
   $('fields-list').innerHTML = '';
+  $('sections-list').innerHTML = '';
   _fieldCounter = 0;
+  _sectionCounter = 0;
+  _secFieldCounters = {};
+  if (S.sectionsMode) exitSectionsMode();
   $('db-toggle').checked       = false;
   $('db-name').value           = '';
   $('db-user').value           = '';
