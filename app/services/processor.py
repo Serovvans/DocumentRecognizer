@@ -56,6 +56,8 @@ def process_documents(
     start_time = time.monotonic()
     counter_lock = threading.Lock()
 
+    output_stem = Path(output_path).stem
+
     # ── Phase 1: OCR ──────────────────────────────────────────────────────────
     ocr_results: dict[str, str | Exception] = {}
     ocr_workers = max(1, workers)
@@ -83,12 +85,25 @@ def process_documents(
                 }
             )
 
+    # Save OCR results to auxiliary file
+    ocr_aux_path = str(Path(output_path).with_name(f"{output_stem}_ocr.json"))
+    with open(ocr_aux_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {p: t for p, t in ocr_results.items() if isinstance(t, str)},
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
     # ── Phase 2: LLM extraction ───────────────────────────────────────────────
     extract_concurrency = max(1, min(EXTRACT_WORKERS, workers))
+    raw_responses: dict = {}
+    raw_lock = threading.Lock()
 
     def _extract_one(
         pdf_path: str, ocr_text: str
     ) -> tuple[str, dict | None, str | None, str | None]:
+        local_raw: dict = {}
         try:
             result = extract_fields_from_ocr(
                 ocr_text,
@@ -98,7 +113,10 @@ def process_documents(
                 per_field=per_field,
                 sections=sections or [],
                 prefix=f"[{pdf_path}] ",
+                raw_collector=local_raw,
             )
+            with raw_lock:
+                raw_responses[pdf_path] = next(iter(local_raw.values()), None)
             return pdf_path, result, None, None
         except DocumentRejected as exc:
             return pdf_path, None, None, exc.reason
@@ -190,6 +208,11 @@ def process_documents(
                 for future in as_completed(retry_futures):
                     pdf_path, result, error, rejection_reason = future.result()
                     _emit(out, pdf_path, result, error, rejection_reason)
+
+    # Save raw extraction responses to auxiliary file
+    raw_aux_path = str(Path(output_path).with_name(f"{output_stem}_raw.json"))
+    with open(raw_aux_path, "w", encoding="utf-8") as f:
+        json.dump(raw_responses, f, ensure_ascii=False, indent=2)
 
     db_stats = None
     if db_writer:
