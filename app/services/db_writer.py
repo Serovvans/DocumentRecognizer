@@ -165,15 +165,14 @@ class DBWriter:
                             f"ALTER TABLE {t} ALTER COLUMN {_qi(name)} DROP NOT NULL"
                         )
                         self._known_columns.add(name)
-                # Quality / metadata flags
-                for flag_col in ("has_handwriting_issues", "low_ocr_quality"):
-                    cur.execute(
-                        f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(flag_col)} BOOLEAN"
-                    )
-                    cur.execute(
-                        f"ALTER TABLE {t} ALTER COLUMN {_qi(flag_col)} DROP NOT NULL"
-                    )
-                    self._known_columns.add(flag_col)
+                # Handwriting quality flag
+                cur.execute(
+                    f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi('has_handwriting_issues')} BOOLEAN"
+                )
+                cur.execute(
+                    f"ALTER TABLE {t} ALTER COLUMN {_qi('has_handwriting_issues')} DROP NOT NULL"
+                )
+                self._known_columns.add("has_handwriting_issues")
             conn.commit()
         finally:
             self._pool.putconn(conn)
@@ -232,11 +231,10 @@ class DBWriter:
                     col_names.append("source_file")
                     values.append(source_file)
 
-                for flag_col in ("has_handwriting_issues", "low_ocr_quality"):
-                    if flag_col in data:
-                        col_names.append(flag_col)
-                        flag = data[flag_col]
-                        values.append(bool(flag) if flag is not None else None)
+                if "has_handwriting_issues" in data:
+                    col_names.append("has_handwriting_issues")
+                    flag = data["has_handwriting_issues"]
+                    values.append(bool(flag) if flag is not None else None)
 
                 for name, val, db_type in rows_fields:
                     col_names.append(name)

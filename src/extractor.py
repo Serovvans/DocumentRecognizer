@@ -22,7 +22,6 @@ from .prompt import (
     build_json_fix_prompt,
 )
 from .json_utils import extract_json, get_last_parse_error
-from .html_parser import parse_ocr_html, is_modern_format
 
 _MAX_JSON_RETRIES = 3
 
@@ -37,31 +36,6 @@ _NULL_LIKE_VALUES = frozenset({
     "н/д", "нд", "-", "—", "",
 })
 
-# ИНН: 10 цифр (юрлицо) или 12 (физлицо/ИП)
-_INN_LENGTHS = frozenset({10, 12})
-# ОГРН: 13 цифр (юрлицо) или 15 (ИП — ОГРНИП)
-_OGRN_LENGTHS = frozenset({13, 15})
-
-
-def _digits_only(s: str) -> str:
-    return re.sub(r'\D', '', s)
-
-
-def _is_valid_inn(s: str) -> bool:
-    return len(_digits_only(s)) in _INN_LENGTHS
-
-
-def _is_valid_ogrn(s: str) -> bool:
-    return len(_digits_only(s)) in _OGRN_LENGTHS
-
-
-def _clean_numeric_id(val) -> str | None:
-    """Strip non-digit characters; return cleaned string or None if result is empty."""
-    if not isinstance(val, str):
-        return None
-    cleaned = _digits_only(val)
-    return cleaned if cleaned else None
-
 
 def _postprocess(result: dict, fields: list) -> dict:
     """Ensure all fields present; replace null-like strings with None; unwrap lists.
@@ -70,18 +44,7 @@ def _postprocess(result: dict, fields: list) -> dict:
     optional 'allow_list' (bool, default False).  When allow_list is False and
     the model returned a list, only the first non-null element is kept — this
     prevents hallucinated multi-values for inherently single-value fields.
-
-    For fields with db_type 'inn' or 'ogrn' in the dynamic preset, values are
-    validated: non-digit characters are stripped, and values with the wrong digit
-    count are set to null.  If inn and ogrn appear swapped (digit lengths match
-    the opposite field), they are automatically exchanged.
     """
-    # Build db_type map from dynamic field definitions (not available in legacy str path)
-    db_type_map: dict[str, str] = {}
-    for f in fields:
-        if isinstance(f, dict) and "db_type" in f:
-            db_type_map[f["name"]] = f["db_type"]
-
     out: dict = {}
     for f in fields:
         if isinstance(f, str):
@@ -106,61 +69,6 @@ def _postprocess(result: dict, fields: list) -> dict:
             out[name] = None
         else:
             out[name] = val
-
-    # --- INN / OGRN format validation + auto-swap ---
-    # Collect all field names that carry inn or ogrn semantics
-    inn_fields = [n for n, t in db_type_map.items() if t == "inn"]
-    ogrn_fields = [n for n, t in db_type_map.items() if t == "ogrn"]
-
-    if inn_fields and ogrn_fields:
-        # For now handle the common single-pair case; multi-pair is unusual
-        inn_name = inn_fields[0]
-        ogrn_name = ogrn_fields[0]
-        inn_val = out.get(inn_name)
-        ogrn_val = out.get(ogrn_name)
-
-        inn_digits = _clean_numeric_id(inn_val) if isinstance(inn_val, str) else None
-        ogrn_digits = _clean_numeric_id(ogrn_val) if isinstance(ogrn_val, str) else None
-
-        inn_ok = inn_digits is not None and len(inn_digits) in _INN_LENGTHS
-        inn_looks_ogrn = inn_digits is not None and len(inn_digits) in _OGRN_LENGTHS
-        ogrn_ok = ogrn_digits is not None and len(ogrn_digits) in _OGRN_LENGTHS
-        ogrn_looks_inn = ogrn_digits is not None and len(ogrn_digits) in _INN_LENGTHS
-
-        if inn_looks_ogrn and ogrn_looks_inn:
-            # Values are clearly swapped — exchange them
-            out[inn_name] = ogrn_digits
-            out[ogrn_name] = inn_digits
-        else:
-            # INN: must be 10 or 12 digits; anything else → null
-            if inn_val is not None:
-                if inn_ok:
-                    out[inn_name] = inn_digits
-                else:
-                    out[inn_name] = None
-            # OGRN: must be 13 or 15 digits; anything else → null
-            if ogrn_val is not None:
-                if ogrn_ok:
-                    out[ogrn_name] = ogrn_digits
-                else:
-                    out[ogrn_name] = None
-    else:
-        # Legacy path without db_type info: at least strip non-digits for known field names
-        for name in ("ИНН", "inn"):
-            if name in out and isinstance(out[name], str):
-                d = _clean_numeric_id(out[name])
-                if d and len(d) in _INN_LENGTHS:
-                    out[name] = d
-                elif d is None or len(d) not in _INN_LENGTHS:
-                    out[name] = None
-        for name in ("ОГРН", "ogrn"):
-            if name in out and isinstance(out[name], str):
-                d = _clean_numeric_id(out[name])
-                if d and len(d) in _OGRN_LENGTHS:
-                    out[name] = d
-                elif d is None or len(d) not in _OGRN_LENGTHS:
-                    out[name] = None
-
     return out
 
 
@@ -356,43 +264,14 @@ def _extract_section(
     return _extract_with_retry(messages, model, prefix, log)
 
 
-def _section_present_in_ocr(section: dict, ocr_text: str) -> bool:
-    """Heuristic: check if a section's content is actually present in the OCR text.
-
-    Uses the first field's expected label prefix from the section description, or
-    falls back to checking for any of the field names.  Returns True when uncertain.
-    """
-    desc = section.get("description", "")
-    # Look for explicit numbered-section markers mentioned in the description,
-    # e.g. "Раздел 2", "РАЗДЕЛ 2", "п. 2.1", "2.2.1"
-    section_numbers = re.findall(r'\b(\d+\.\d+(?:\.\d+)?)', desc)
-    for num in section_numbers:
-        # Accept both "2.1." and "2.1 " forms in OCR text
-        if re.search(re.escape(num) + r'[.\s]', ocr_text):
-            return True
-    # Also look for "Раздел N" keywords
-    razdel_numbers = re.findall(r'Раздел\s+(\d+)', desc, re.IGNORECASE)
-    for n in razdel_numbers:
-        if re.search(rf'[Рр]аздел\s+{n}[^0-9]', ocr_text):
-            return True
-    # If no markers found in description, assume present to avoid false negatives
-    return not (section_numbers or razdel_numbers)
-
-
 def _extract_fields_by_sections(
     ocr_text: str,
     sections: list[dict],
     model: str,
     prefix: str,
     log: Callable[[str], None],
-    modern: bool = False,
 ) -> dict:
-    """Extract fields section by section, parallelised across sections.
-
-    When *modern* is True and a section's content is not found in the OCR text,
-    all fields for that section are set to null without calling the LLM — this
-    prevents the model from picking up data from the wrong section.
-    """
+    """Extract fields section by section, parallelised across sections."""
     result: dict[str, object] = {}
     lock = threading.Lock()
 
@@ -402,14 +281,6 @@ def _extract_fields_by_sections(
             return
         name = section["name"]
         desc = section.get("description", "")
-
-        if modern and not _section_present_in_ocr(section, ocr_text):
-            log(f"{prefix}  Раздел «{name}» отсутствует в OCR — поля = null")
-            with lock:
-                for f in fields:
-                    result[f["name"]] = None
-            return
-
         log(f"{prefix}  Раздел «{name}» ({len(fields)} полей)...")
         raw = _extract_section(name, desc, fields, ocr_text, model, prefix, log)
         with lock:
@@ -455,34 +326,6 @@ def _classify_document(
     log(f"{prefix}Документ принят классификатором: {reason}")
 
 
-_GARBLED_PATTERNS = re.compile(
-    r'иисропешиим|кажите-кше|стронтельство|стропельство|касищек|касшейск|ратегая|фагегаан',
-    re.IGNORECASE,
-)
-
-
-def _ocr_quality_score(ocr_text: str) -> float:
-    """Return 0.0–1.0 quality estimate for OCR text (1.0 = clean).
-
-    Combines two signals:
-    - Ratio of known-garbled word patterns (low quality → low score)
-    - Ratio of cyrillic words to all word-like tokens (high ratio → high score)
-    """
-    if not ocr_text.strip():
-        return 0.0
-
-    garbled_hits = len(_GARBLED_PATTERNS.findall(ocr_text))
-    words = re.findall(r'[а-яёА-ЯЁa-zA-Z]{3,}', ocr_text)
-    if not words:
-        return 0.0
-
-    cyrillic_words = sum(1 for w in words if re.search(r'[а-яёА-ЯЁ]', w))
-    cyrillic_ratio = cyrillic_words / len(words)
-    garbled_penalty = min(1.0, garbled_hits * 0.15)
-
-    return max(0.0, cyrillic_ratio - garbled_penalty)
-
-
 def extract_fields_dynamic(
     pdf_path: str,
     fields: list[dict],
@@ -498,15 +341,9 @@ def extract_fields_dynamic(
     If *classification_prompt* is provided, a classification step runs after OCR.
     Raises DocumentRejected if the document does not match the prompt.
 
-    Extraction strategy (in order of reliability):
-    1. HTML-first: parse glm-ocr HTML tables directly by numbered section labels
-       (works for modern post-2017 forms). Fields found this way bypass the LLM.
-    2. LLM extraction: only for fields not found by HTML parser, or for old-format
-       documents. Uses sections / per_field / bulk mode as configured.
-
-    Metadata added to every result:
-    - has_handwriting_issues: bool — detected OCR date garbling
-    - low_ocr_quality: bool — OCR quality score below threshold
+    If *per_field* is True, each field is extracted in a separate LLM call
+    (parallelised). This reduces the chance of fields being silently skipped
+    when the model has to handle many fields at once.
     """
     prefix = f"[{pdf_path}] "
     log(f"{prefix}Конвертация PDF в изображения...")
@@ -520,62 +357,28 @@ def extract_fields_dynamic(
     if classification_prompt.strip():
         _classify_document(combined_ocr, classification_prompt, prefix, log, model=extraction_model, fields=fields)
 
-    # --- HTML-first extraction ---
-    modern = is_modern_format(combined_ocr)
-    html_raw: dict[str, object] = {}
-    if modern:
-        html_raw = parse_ocr_html(combined_ocr)
-        found = [k for k, v in html_raw.items() if v not in (None, "", [])]
-        log(f"{prefix}HTML-парсер: найдено {len(found)} полей из структурированных таблиц")
-    else:
-        log(f"{prefix}Документ старого формата — HTML-парсер пропускается")
+    if sections:
+        log(f"{prefix}Этап 2: извлечение по {len(sections)} разделам моделью {extraction_model}...")
+        raw = _extract_fields_by_sections(combined_ocr, sections, extraction_model, prefix, log)
+        result = _postprocess(raw, fields)
+        result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+        return result
 
-    all_field_names = {f["name"] for f in fields}
-    html_found = {k for k, v in html_raw.items() if v not in (None, "", []) and k in all_field_names}
+    field_names = [f["name"] for f in fields]
 
-    # --- LLM extraction for remaining fields ---
-    missing_fields = [f for f in fields if f["name"] not in html_found]
+    if per_field:
+        log(f"{prefix}Этап 2: извлечение полей по одному (per-field) моделью {extraction_model}...")
+        raw = _extract_fields_per_field(combined_ocr, fields, extraction_model, prefix, log)
+        result = _postprocess(raw, fields)
+        result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+        return result
 
-    raw: dict[str, object] = {}
-
-    if missing_fields:
-        if sections:
-            # Only call LLM for sections that still have missing fields
-            missing_names = {f["name"] for f in missing_fields}
-            sections_needed = [
-                {**s, "fields": [f for f in s.get("fields", []) if f["name"] in missing_names]}
-                for s in sections
-            ]
-            sections_needed = [s for s in sections_needed if s["fields"]]
-
-            if sections_needed:
-                log(f"{prefix}Этап 2 (LLM): {len(sections_needed)} разделов, {len(missing_fields)} полей без HTML-значений...")
-                raw = _extract_fields_by_sections(combined_ocr, sections_needed, extraction_model, prefix, log, modern=modern)
-            else:
-                log(f"{prefix}Этап 2: все поля найдены HTML-парсером, LLM не вызывается")
-
-        elif per_field:
-            log(f"{prefix}Этап 2 (LLM per-field): {len(missing_fields)} полей без HTML-значений...")
-            raw = _extract_fields_per_field(combined_ocr, missing_fields, extraction_model, prefix, log)
-
-        else:
-            log(f"{prefix}Этап 2 (LLM bulk): {len(missing_fields)} полей без HTML-значений...")
-            messages = [
-                {"role": "system", "content": build_extraction_system_prompt_dynamic(missing_fields)},
-                {"role": "user", "content": build_extraction_user_prompt(combined_ocr)},
-            ]
-            raw = _extract_with_retry(messages, extraction_model, prefix, log)
-    else:
-        log(f"{prefix}Этап 2: все поля найдены HTML-парсером, LLM не вызывается")
-
-    # Merge: HTML results win over LLM results for fields present in both
-    merged = {**raw, **html_raw}
-
-    result = _postprocess(merged, fields)
-
-    # Metadata
-    quality = _ocr_quality_score(combined_ocr)
+    log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
+    messages = [
+        {"role": "system", "content": build_extraction_system_prompt_dynamic(fields)},
+        {"role": "user", "content": build_extraction_user_prompt(combined_ocr)},
+    ]
+    raw = _extract_with_retry(messages, extraction_model, prefix, log)
+    result = _postprocess(raw, fields)
     result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
-    result["low_ocr_quality"] = quality < 0.5
-
     return result
