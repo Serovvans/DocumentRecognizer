@@ -23,7 +23,7 @@ DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
 # Ollama
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OCR_MODEL: str = os.getenv("OCR_MODEL", "glm-ocr")
-EXTRACTION_MODEL: str = os.getenv("EXTRACTION_MODEL", "llama3.1:8b")
+EXTRACTION_MODEL: str = os.getenv("EXTRACTION_MODEL", "qwen2.5:14b-instruct-q4_K_M")
 
 # Extraction backend: "ollama" (local) or "gigachat" (API via LangChain)
 EXTRACTION_BACKEND: str = os.getenv("EXTRACTION_BACKEND", "ollama")
@@ -33,6 +33,9 @@ GIGACHAT_MODEL: str = os.getenv("GIGACHAT_MODEL", "GigaChat-2")
 EFFECTIVE_EXTRACTION_MODEL: str = (
     GIGACHAT_MODEL if EXTRACTION_BACKEND == "gigachat" else EXTRACTION_MODEL
 )
+
+# Число документов, обрабатываемых параллельно на фазе извлечения (LLM).
+EXTRACT_WORKERS: int = int(os.getenv("EXTRACT_WORKERS", "1"))
 
 # Paths
 PRESETS_DIR: Path = BASE_DIR / "presets"

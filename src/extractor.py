@@ -326,6 +326,65 @@ def _classify_document(
     log(f"{prefix}Документ принят классификатором: {reason}")
 
 
+def ocr_document(
+    pdf_path: str,
+    ocr_model: str = OCR_MODEL,
+    log: Callable[[str], None] = _default_log,
+) -> str:
+    """OCR all pages of *pdf_path*; return concatenated text with page separators."""
+    prefix = f"[{pdf_path}] "
+    log(f"{prefix}Конвертация PDF в изображения...")
+    images = pdf_to_images_base64(pdf_path)
+    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {ocr_model} (параллельно)...")
+    page_texts = _ocr_pages_parallel(images, prefix, log, ocr_model=ocr_model, max_workers=OCR_PAGE_WORKERS)
+    combined_ocr = "\n\n".join(page_texts)
+    log(f"{prefix}--- Результат OCR ---\n{combined_ocr}\n{prefix}--- Конец OCR ---")
+    return combined_ocr
+
+
+def extract_fields_from_ocr(
+    ocr_text: str,
+    fields: list[dict],
+    log: Callable[[str], None] = _default_log,
+    extraction_model: str = EFFECTIVE_EXTRACTION_MODEL,
+    classification_prompt: str = "",
+    per_field: bool = False,
+    sections: list[dict] | None = None,
+    prefix: str = "",
+) -> dict:
+    """Run LLM field extraction on already-OCR'd text.
+
+    Mirrors the second half of extract_fields_dynamic, decoupled from the OCR step.
+    *fields* must be a list of dicts with at least a 'name' key.
+    """
+    if classification_prompt.strip():
+        _classify_document(ocr_text, classification_prompt, prefix, log, model=extraction_model, fields=fields)
+
+    if sections:
+        log(f"{prefix}Этап 2: извлечение по {len(sections)} разделам моделью {extraction_model}...")
+        raw = _extract_fields_by_sections(ocr_text, sections, extraction_model, prefix, log)
+        result = _postprocess(raw, fields)
+        result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+        return result
+
+    if per_field:
+        log(f"{prefix}Этап 2: извлечение полей по одному (per-field) моделью {extraction_model}...")
+        raw = _extract_fields_per_field(ocr_text, fields, extraction_model, prefix, log)
+        result = _postprocess(raw, fields)
+        result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+        return result
+
+    log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
+    messages = [
+        {"role": "system", "content": build_extraction_system_prompt_dynamic(fields)},
+        {"role": "user", "content": build_extraction_user_prompt(ocr_text)},
+    ]
+    raw = _extract_with_retry(messages, extraction_model, prefix, log)
+    result = _postprocess(raw, fields)
+    result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+    return result
+
+
 def extract_fields_dynamic(
     pdf_path: str,
     fields: list[dict],

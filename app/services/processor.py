@@ -5,8 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
-from app.config import OCR_MODEL, EFFECTIVE_EXTRACTION_MODEL
-from src.extractor import extract_fields_dynamic, DocumentRejected
+from app.config import OCR_MODEL, EFFECTIVE_EXTRACTION_MODEL, EXTRACT_WORKERS
+from src.extractor import ocr_document, extract_fields_from_ocr, DocumentRejected
 
 
 def process_documents(
@@ -21,11 +21,16 @@ def process_documents(
     sections: list[dict] | None = None,
 ) -> None:
     """
-    Process *pdf_paths* in parallel, stream progress via *callback*, write
-    JSONL results to *output_path*, and optionally insert rows via *db_writer*.
+    Two-phase processing: first OCR all documents in parallel, then run LLM
+    extraction on each OCR result with limited concurrency.
 
-    Failed documents (errors, not rejections) are retried once — up to 2 attempts total.
-    Rejected documents are never retried.
+    Progress events:
+      {"type": "ocr_done",  "file": name, "ocr_done": N, "total": N}
+      {"type": "progress",  ...}   — emitted after each extraction completes
+      {"type": "complete",  ...}
+
+    Failed documents (errors, not rejections) are retried once on the extraction
+    phase — up to 2 attempts total. Rejected documents are never retried.
     """
     total = len(pdf_paths)
 
@@ -51,16 +56,48 @@ def process_documents(
     start_time = time.monotonic()
     counter_lock = threading.Lock()
 
-    def _process_one(pdf_path: str) -> tuple[str, dict | None, str | None, str | None]:
+    # ── Phase 1: OCR ──────────────────────────────────────────────────────────
+    ocr_results: dict[str, str | Exception] = {}
+    ocr_workers = max(1, workers)
+    ocr_done_count = 0
+
+    def _ocr_one(path: str) -> tuple[str, str]:
+        return path, ocr_document(path, ocr_model=OCR_MODEL)
+
+    with ThreadPoolExecutor(max_workers=ocr_workers) as pool:
+        ocr_futures = {pool.submit(_ocr_one, p): p for p in pdf_paths}
+        for future in as_completed(ocr_futures):
+            path = ocr_futures[future]
+            try:
+                _, text = future.result()
+                ocr_results[path] = text
+            except Exception as exc:
+                ocr_results[path] = exc
+            ocr_done_count += 1
+            callback(
+                {
+                    "type": "ocr_done",
+                    "file": Path(path).name,
+                    "ocr_done": ocr_done_count,
+                    "total": total,
+                }
+            )
+
+    # ── Phase 2: LLM extraction ───────────────────────────────────────────────
+    extract_concurrency = max(1, min(EXTRACT_WORKERS, workers))
+
+    def _extract_one(
+        pdf_path: str, ocr_text: str
+    ) -> tuple[str, dict | None, str | None, str | None]:
         try:
-            result = extract_fields_dynamic(
-                pdf_path,
+            result = extract_fields_from_ocr(
+                ocr_text,
                 fields,
-                ocr_model=OCR_MODEL,
                 extraction_model=EFFECTIVE_EXTRACTION_MODEL,
                 classification_prompt=classification_prompt,
                 per_field=per_field,
                 sections=sections or [],
+                prefix=f"[{pdf_path}] ",
             )
             return pdf_path, result, None, None
         except DocumentRejected as exc:
@@ -124,22 +161,32 @@ def process_documents(
         )
 
     with open(output_path, "w", encoding="utf-8") as out:
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
-            # Pass 1: process all documents
-            futures = {executor.submit(_process_one, p): p for p in pdf_paths}
+        with ThreadPoolExecutor(max_workers=extract_concurrency) as pool:
+            # Immediately emit errors for documents whose OCR failed
             retry_paths: list[str] = []
+            ok_ocr: dict[str, str] = {}
+            for path, ocr_result in ocr_results.items():
+                if isinstance(ocr_result, Exception):
+                    _emit(out, path, None, f"Ошибка OCR: {ocr_result}", None)
+                else:
+                    ok_ocr[path] = ocr_result
 
+            # Pass 1: extract all documents with successful OCR
+            futures = {
+                pool.submit(_extract_one, p, t): p for p, t in ok_ocr.items()
+            }
             for future in as_completed(futures):
                 pdf_path, result, error, rejection_reason = future.result()
                 if error is not None:
-                    # Buffer for a second attempt; do not emit yet
                     retry_paths.append(pdf_path)
                 else:
                     _emit(out, pdf_path, result, error, rejection_reason)
 
-            # Pass 2: one retry for each document that errored on the first attempt
+            # Pass 2: one retry per document that errored during extraction
             if retry_paths:
-                retry_futures = {executor.submit(_process_one, p): p for p in retry_paths}
+                retry_futures = {
+                    pool.submit(_extract_one, p, ok_ocr[p]): p for p in retry_paths
+                }
                 for future in as_completed(retry_futures):
                     pdf_path, result, error, rejection_reason = future.result()
                     _emit(out, pdf_path, result, error, rejection_reason)

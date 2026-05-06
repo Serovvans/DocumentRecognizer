@@ -53,8 +53,10 @@ def _call_ollama(
         messages=messages,
         options={
             "temperature": 0,
-            "num_batch": 2048,
+            "num_ctx": 8192,
+            "num_batch": 512,
             "num_predict": max_tokens,
+            "num_gpu": 99,
         },
     )
     text: str = response.message.content or ""

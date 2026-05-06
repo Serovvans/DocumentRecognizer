@@ -6,7 +6,7 @@ load_dotenv()
 
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OCR_MODEL: str = os.getenv("OCR_MODEL", "glm-ocr")
-EXTRACTION_MODEL: str = os.getenv("EXTRACTION_MODEL", "llama3.1:8b")
+EXTRACTION_MODEL: str = os.getenv("EXTRACTION_MODEL", "qwen2.5:14b-instruct-q4_K_M")
 
 # "ollama" uses local Ollama models; "gigachat" uses GigaChat API via LangChain
 EXTRACTION_BACKEND: str = os.getenv("EXTRACTION_BACKEND", "ollama")
@@ -17,8 +17,12 @@ EFFECTIVE_EXTRACTION_MODEL: str = (
     GIGACHAT_MODEL if EXTRACTION_BACKEND == "gigachat" else EXTRACTION_MODEL
 )
 
-# Число документов, обрабатываемых параллельно
+# Число документов, обрабатываемых параллельно (фаза OCR)
 MAX_WORKERS = 4
+
+# Число документов, обрабатываемых параллельно на фазе извлечения (LLM).
+# Для крупной модели рекомендуется 1, чтобы не делить VRAM между несколькими экземплярами.
+EXTRACT_WORKERS: int = int(os.getenv("EXTRACT_WORKERS", "1"))
 
 # Число страниц одного документа, OCR которых идёт параллельно.
 # Ollama умеет очередить запросы к одной модели, поэтому 2–4 дают реальный выигрыш.
