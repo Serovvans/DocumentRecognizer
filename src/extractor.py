@@ -6,7 +6,7 @@ from typing import Callable
 
 from ollama import chat
 
-from .config import OCR_MODEL, EFFECTIVE_EXTRACTION_MODEL, OCR_PAGE_WORKERS
+from .config import OCR_MODEL, EFFECTIVE_EXTRACTION_MODEL, OCR_PAGE_WORKERS, MULTI_PERMIT_PAGE_THRESHOLD
 from .html_utils import html_tables_to_text
 from .llm import call_text_model
 from .pdf_utils import pdf_to_images_base64
@@ -21,6 +21,8 @@ from .prompt import (
     build_classification_system_prompt,
     build_classification_user_prompt,
     build_json_fix_prompt,
+    build_segmentation_system_prompt,
+    build_segmentation_user_prompt,
 )
 from .json_utils import extract_json, get_last_parse_error
 
@@ -218,6 +220,94 @@ def _ocr_pages_parallel(
             results[page_num] = text
 
     return [f"=== Страница {i} ===\n{results[i]}" for i in sorted(results)]
+
+
+def _split_pages_from_ocr(combined_ocr: str) -> list[str]:
+    """Split a combined OCR string back into individual page texts.
+
+    Each element keeps its '=== Страница N ===' header.
+    """
+    parts = re.split(r'(?=\s*=== Страница \d+ ===)', combined_ocr.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _detect_permit_segments(
+    page_texts: list[str],
+    model: str,
+    prefix: str,
+    log: Callable[[str], None],
+) -> list[list[str]]:
+    """Ask the LLM to identify per-permit page ranges; returns a list of page-text groups.
+
+    Passes only the first 25 lines of each page to keep the prompt short.
+    Falls back to treating the whole document as a single permit on any failure.
+    """
+    total_pages = len(page_texts)
+
+    # Truncate each page to the first 25 non-empty lines for the segmentation prompt
+    truncated_pages = []
+    for pt in page_texts:
+        head = "\n".join(pt.splitlines()[:25])
+        truncated_pages.append(head)
+    combined = "\n\n".join(truncated_pages)
+
+    messages = [
+        {"role": "system", "content": build_segmentation_system_prompt()},
+        {"role": "user", "content": build_segmentation_user_prompt(combined)},
+    ]
+    text = call_text_model(messages, model, log=log, max_tokens=256)
+    log(f"{prefix}Сегментатор вернул: {text}")
+
+    try:
+        segments = extract_json(text)
+        if not isinstance(segments, list) or not segments:
+            raise ValueError("expected non-empty list")
+    except Exception as exc:
+        log(f"{prefix}Не удалось разобрать ответ сегментатора ({exc}), обрабатываем как единый документ")
+        return [page_texts]
+
+    result: list[list[str]] = []
+    for seg in segments:
+        try:
+            start = max(1, int(seg["start_page"])) - 1   # convert to 0-based
+            end = min(total_pages, int(seg["end_page"]))  # inclusive 1-based → exclusive slice end
+            pages_slice = page_texts[start:end]
+            if pages_slice:
+                result.append(pages_slice)
+        except (KeyError, ValueError, TypeError):
+            continue
+
+    return result if result else [page_texts]
+
+
+def detect_and_split_permits(
+    combined_ocr: str,
+    model: str = EFFECTIVE_EXTRACTION_MODEL,
+    prefix: str = "",
+    log: Callable[[str], None] = _default_log,
+    page_threshold: int = MULTI_PERMIT_PAGE_THRESHOLD,
+) -> list[str]:
+    """Detect multiple permits inside one combined OCR text and split them.
+
+    Returns a list of per-permit combined OCR strings. If only one permit is
+    found (or the page count is below *page_threshold*), returns a list with
+    the original *combined_ocr* as the sole element.
+    """
+    page_texts = _split_pages_from_ocr(combined_ocr)
+    total_pages = len(page_texts)
+
+    if total_pages <= page_threshold:
+        return [combined_ocr]
+
+    log(f"{prefix}Обнаружено {total_pages} стр. (порог: {page_threshold}), ищем несколько разрешений...")
+    segments = _detect_permit_segments(page_texts, model, prefix, log)
+
+    if len(segments) <= 1:
+        log(f"{prefix}Сегментатор нашёл одно разрешение, обрабатываем целиком")
+        return [combined_ocr]
+
+    log(f"{prefix}Найдено {len(segments)} разрешений в одном файле")
+    return ["\n\n".join(seg) for seg in segments]
 
 
 def extract_fields(pdf_path: str, log: Callable[[str], None] = _default_log) -> dict:

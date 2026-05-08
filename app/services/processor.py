@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.config import OCR_MODEL, EFFECTIVE_EXTRACTION_MODEL, EXTRACT_WORKERS
-from src.extractor import ocr_document, extract_fields_from_ocr, DocumentRejected
+from src.extractor import ocr_document, extract_fields_from_ocr, detect_and_split_permits, DocumentRejected
 
 
 def process_documents(
@@ -100,28 +100,45 @@ def process_documents(
     raw_responses: dict = {}
     raw_lock = threading.Lock()
 
+    # Each element: (result, error, rejection_reason)
+    _PermitResult = tuple[dict | None, str | None, str | None]
+
     def _extract_one(
         pdf_path: str, ocr_text: str
-    ) -> tuple[str, dict | None, str | None, str | None]:
-        local_raw: dict = {}
-        try:
-            result = extract_fields_from_ocr(
-                ocr_text,
-                fields,
-                extraction_model=EFFECTIVE_EXTRACTION_MODEL,
-                classification_prompt=classification_prompt,
-                per_field=per_field,
-                sections=sections or [],
-                prefix=f"[{pdf_path}] ",
-                raw_collector=local_raw,
-            )
-            with raw_lock:
-                raw_responses[pdf_path] = next(iter(local_raw.values()), None)
-            return pdf_path, result, None, None
-        except DocumentRejected as exc:
-            return pdf_path, None, None, exc.reason
-        except Exception as exc:
-            return pdf_path, None, str(exc), None
+    ) -> tuple[str, list[_PermitResult]]:
+        """Extract fields from *ocr_text*, splitting into individual permits when needed.
+
+        Returns (pdf_path, list_of_permit_results) where each permit result is
+        (result_dict | None, error_str | None, rejection_reason | None).
+        """
+        permit_texts = detect_and_split_permits(
+            ocr_text,
+            prefix=f"[{pdf_path}] ",
+        )
+
+        permit_results: list[_PermitResult] = []
+        for permit_ocr in permit_texts:
+            local_raw: dict = {}
+            try:
+                result = extract_fields_from_ocr(
+                    permit_ocr,
+                    fields,
+                    extraction_model=EFFECTIVE_EXTRACTION_MODEL,
+                    classification_prompt=classification_prompt,
+                    per_field=per_field,
+                    sections=sections or [],
+                    prefix=f"[{pdf_path}] ",
+                    raw_collector=local_raw,
+                )
+                with raw_lock:
+                    raw_responses[pdf_path] = next(iter(local_raw.values()), None)
+                permit_results.append((result, None, None))
+            except DocumentRejected as exc:
+                permit_results.append((None, None, exc.reason))
+            except Exception as exc:
+                permit_results.append((None, str(exc), None))
+
+        return pdf_path, permit_results
 
     def _emit(
         out,
@@ -129,13 +146,19 @@ def process_documents(
         result: dict | None,
         error: str | None,
         rejection_reason: str | None,
+        permit_index: int | None = None,
+        permits_total: int | None = None,
+        count_done: bool = True,
     ) -> None:
         nonlocal done, successful, failed, rejected
 
         with counter_lock:
-            done += 1
+            # Increment file-level "done" counter only once per source file so
+            # that progress % stays meaningful even for multi-permit documents.
+            if count_done:
+                done += 1
             elapsed = time.monotonic() - start_time
-            speed = elapsed / done
+            speed = elapsed / max(done, 1)
             eta = (total - done) * speed
 
             if rejection_reason is not None:
@@ -157,6 +180,10 @@ def process_documents(
                     db_writer.write(pdf_path, result)
                 except Exception as db_exc:
                     record["db_error"] = str(db_exc)
+
+        if permit_index is not None:
+            record["permit_index"] = permit_index
+            record["permits_total"] = permits_total
 
         out.write(json.dumps(record, ensure_ascii=False) + "\n")
         out.flush()
@@ -194,20 +221,31 @@ def process_documents(
                 pool.submit(_extract_one, p, t): p for p, t in ok_ocr.items()
             }
             for future in as_completed(futures):
-                pdf_path, result, error, rejection_reason = future.result()
-                if error is not None:
-                    retry_paths.append(pdf_path)
+                pdf_path, permit_results = future.result()
+                is_multi = len(permit_results) > 1
+                # For single-permit failures, queue a retry; multi-permit failures
+                # are emitted immediately (no retry to avoid re-running segmentation).
+                if not is_multi and len(permit_results) == 1:
+                    result, error, rejection = permit_results[0]
+                    if error is not None:
+                        retry_paths.append(pdf_path)
+                    else:
+                        _emit(out, pdf_path, result, error, rejection)
                 else:
-                    _emit(out, pdf_path, result, error, rejection_reason)
+                    for idx, (result, error, rejection) in enumerate(permit_results):
+                        _emit(out, pdf_path, result, error, rejection,
+                              permit_index=idx, permits_total=len(permit_results),
+                              count_done=(idx == 0))
 
-            # Pass 2: one retry per document that errored during extraction
+            # Pass 2: one retry per single-permit document that errored during extraction
             if retry_paths:
                 retry_futures = {
                     pool.submit(_extract_one, p, ok_ocr[p]): p for p in retry_paths
                 }
                 for future in as_completed(retry_futures):
-                    pdf_path, result, error, rejection_reason = future.result()
-                    _emit(out, pdf_path, result, error, rejection_reason)
+                    pdf_path, permit_results = future.result()
+                    result, error, rejection = permit_results[0]
+                    _emit(out, pdf_path, result, error, rejection)
 
     # Save raw extraction responses to auxiliary file
     raw_aux_path = str(Path(output_path).with_name(f"{output_stem}_raw.json"))

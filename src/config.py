@@ -29,6 +29,10 @@ EXTRACT_WORKERS: int = int(os.getenv("EXTRACT_WORKERS", "1"))
 # Увеличивать сверх 4 смысла нет — GPU всё равно один.
 OCR_PAGE_WORKERS = 4
 
+# PDF page count above which we check for multiple permits inside one file.
+# Typical single-permit documents are 4–5 pages; multi-permit files are 19–20.
+MULTI_PERMIT_PAGE_THRESHOLD: int = int(os.getenv("MULTI_PERMIT_PAGE_THRESHOLD", "7"))
+
 FIELDS = [
     "Наименование муниципального образования",
     "Дата разрешения на строительство",
