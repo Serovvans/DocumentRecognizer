@@ -27,7 +27,13 @@ def build_extraction_system_prompt_dynamic(fields: list[dict]) -> str:
 
 
 def build_ocr_prompt() -> str:
-    return "Table Recognition: "
+    return (
+        "Распознай весь текст на изображении скана документа. "
+        "Структурированные таблицы оформляй в HTML (<table><tr><td>…</td></tr></table>). "
+        "Текст вне таблиц (заголовки разделов, номера полей, подписи, рукописные вставки) "
+        "выводи построчно до или после соответствующих таблиц. "
+        "Не пропускай ни одной строки и ни одной ячейки, даже если они пустые."
+    )
 
 
 def build_extraction_system_prompt() -> str:

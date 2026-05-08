@@ -146,20 +146,51 @@ def _ocr_page(
     prefix: str,
     log: Callable[[str], None],
     ocr_model: str = OCR_MODEL,
+    prev_page_tail: str = "",
 ) -> str:
     log(f"{prefix}  OCR страницы {page_num} ({ocr_model})...")
+    prompt = build_ocr_prompt()
+    if prev_page_tail:
+        prompt = (
+            f"{prompt}\n\nКонец предыдущей страницы (для понимания контекста таблиц, "
+            f"которые могут продолжаться):\n{prev_page_tail}"
+        )
     response = chat(
         model=ocr_model,
         messages=[
             {
                 "role": "user",
-                "content": build_ocr_prompt(),
+                "content": prompt,
                 "images": [image_b64],
             }
         ],
         options=_OCR_OPTIONS,
     )
     return response.message.content or ""
+
+
+def _ocr_pages_sequential(
+    images: list[str],
+    prefix: str,
+    log: Callable[[str], None],
+    ocr_model: str = OCR_MODEL,
+) -> list[str]:
+    """OCR pages one by one, passing the tail of each page as context to the next.
+
+    Sequential processing is necessary so that cross-page table continuations
+    can be handled correctly: the model on page N sees the last rows of page N-1
+    and understands the table structure continues.
+    """
+    page_texts: list[str] = []
+    for i, image_b64 in enumerate(images, start=1):
+        prev_tail = ""
+        if page_texts:
+            # Pass the last 10 non-empty lines of the previous page as context
+            prev_lines = [ln for ln in page_texts[-1].splitlines() if ln.strip()]
+            prev_tail = "\n".join(prev_lines[-10:])
+        text = _ocr_page(image_b64, i, prefix, log, ocr_model, prev_page_tail=prev_tail)
+        page_texts.append(text)
+    return [f"=== Страница {i} ===\n{page_texts[i - 1]}" for i in range(1, len(page_texts) + 1)]
 
 
 def _ocr_pages_parallel(
@@ -169,7 +200,11 @@ def _ocr_pages_parallel(
     ocr_model: str = OCR_MODEL,
     max_workers: int = 4,
 ) -> list[str]:
-    """OCR all pages concurrently; returns texts in page order."""
+    """OCR all pages concurrently; returns texts in page order.
+
+    Used as a fallback when OCR_PAGE_WORKERS > 1 is explicitly set.
+    Note: parallel mode cannot pass cross-page table context.
+    """
     results: dict[int, str] = {}
 
     def _task(args: tuple[int, str]) -> tuple[int, str]:
@@ -190,8 +225,8 @@ def extract_fields(pdf_path: str, log: Callable[[str], None] = _default_log) -> 
     log(f"{prefix}Конвертация PDF в изображения...")
     images = pdf_to_images_base64(pdf_path)
 
-    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {OCR_MODEL} (параллельно)...")
-    page_texts = _ocr_pages_parallel(images, prefix, log, max_workers=OCR_PAGE_WORKERS)
+    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {OCR_MODEL} (последовательно, с контекстом)...")
+    page_texts = _ocr_pages_sequential(images, prefix, log)
 
     combined_ocr = "\n\n".join(page_texts)
     log(f"{prefix}--- Результат OCR ---\n{combined_ocr}\n{prefix}--- Конец OCR ---")
@@ -340,8 +375,8 @@ def ocr_document(
     prefix = f"[{pdf_path}] "
     log(f"{prefix}Конвертация PDF в изображения...")
     images = pdf_to_images_base64(pdf_path)
-    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {ocr_model} (параллельно)...")
-    page_texts = _ocr_pages_parallel(images, prefix, log, ocr_model=ocr_model, max_workers=OCR_PAGE_WORKERS)
+    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {ocr_model} (последовательно, с контекстом)...")
+    page_texts = _ocr_pages_sequential(images, prefix, log, ocr_model=ocr_model)
     combined_ocr = "\n\n".join(page_texts)
     log(f"{prefix}--- Результат OCR ---\n{combined_ocr}\n{prefix}--- Конец OCR ---")
     return combined_ocr
@@ -420,8 +455,8 @@ def extract_fields_dynamic(
     log(f"{prefix}Конвертация PDF в изображения...")
     images = pdf_to_images_base64(pdf_path)
 
-    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {ocr_model} (параллельно)...")
-    page_texts = _ocr_pages_parallel(images, prefix, log, ocr_model=ocr_model, max_workers=OCR_PAGE_WORKERS)
+    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {ocr_model} (последовательно, с контекстом)...")
+    page_texts = _ocr_pages_sequential(images, prefix, log, ocr_model=ocr_model)
 
     combined_ocr = "\n\n".join(page_texts)
 
