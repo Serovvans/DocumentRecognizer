@@ -122,6 +122,8 @@ def _extract_with_retry(
         log(f"{prefix}--- Сырой ответ модели (попытка {attempt + 1}) ---\n{text}\n{prefix}--- Конец ответа ---")
         try:
             result = extract_json(text)
+            if not isinstance(result, dict):
+                raise ValueError(f"Ожидался JSON-объект, получен {type(result).__name__}")
             if raw_collector is not None:
                 raw_collector[prefix] = text
             return result
