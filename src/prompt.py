@@ -73,12 +73,14 @@ def build_extraction_user_prompt(ocr_text: str) -> str:
 
 
 def build_classification_system_prompt() -> str:
-    return """Ты — фильтр документов. Реши, соответствует ли документ критерию отбора из запроса пользователя.
+    return """Ты — фильтр документов. Реши, соответствует ли документ типу, указанному пользователем.
 
 Правила:
-- Текст получен OCR и может содержать опечатки и HTML-разметку — это не основание для отклонения.
-- При сомнении — принимай документ (relevant: true). Отклоняй только при явном несоответствии критерию.
-- Не придумывай собственных критериев отбора сверх того, что указал пользователь.
+- Оценивай ТОЛЬКО тип документа — не его полноту, не наличие всех полей, не качество заполнения.
+- Текст получен OCR и может содержать опечатки, пустые поля и HTML-разметку — это не основание для отклонения.
+- Отклоняй (relevant: false) ТОЛЬКО если документ явно является другим типом документа, чем указан критерий (например, критерий «разрешение на строительство», а в документе написано «договор аренды» или «акт приёма»).
+- Если документ похож на нужный тип, но заполнен частично или имеет опечатки — принимай (relevant: true).
+- При любом сомнении — принимай (relevant: true).
 
 Отвечай ТОЛЬКО JSON-объектом без каких-либо пояснений:
 {"relevant": true, "reason": "краткое обоснование на русском"}
@@ -86,18 +88,8 @@ def build_classification_system_prompt() -> str:
 {"relevant": false, "reason": "краткое обоснование на русском"}"""
 
 
-def build_classification_user_prompt(
-    user_criteria: str, ocr_text: str, fields: list[dict] | None = None
-) -> str:
-    parts = [f"Критерий отбора: {user_criteria}"]
-    if fields:
-        fields_str = "\n".join(
-            f"{i + 1}. {f['name']}" + (f" — {f['description']}" if f.get("description") else "")
-            for i, f in enumerate(fields)
-        )
-        parts.append(f"Ожидаемые поля документа:\n{fields_str}")
-    parts.append(f"Текст документа:\n{ocr_text}")
-    return "\n\n".join(parts)
+def build_classification_user_prompt(user_criteria: str, ocr_text: str) -> str:
+    return f"Критерий отбора: {user_criteria}\n\nТекст документа:\n{ocr_text}"
 
 
 def build_single_field_system_prompt(field_name: str, field_description: str = "") -> str:

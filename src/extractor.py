@@ -396,14 +396,13 @@ def _classify_document(
     prefix: str,
     log: Callable[[str], None],
     model: str = EFFECTIVE_EXTRACTION_MODEL,
-    fields: list[dict] | None = None,
 ) -> None:
     """Check document relevance; raises DocumentRejected if the document does not match."""
     log(f"{prefix}Классификация документа моделью {model}...")
     text = call_text_model(
         messages=[
             {"role": "system", "content": build_classification_system_prompt()},
-            {"role": "user", "content": build_classification_user_prompt(classification_prompt, ocr_text, fields)},
+            {"role": "user", "content": build_classification_user_prompt(classification_prompt, ocr_text)},
         ],
         model=model,
         max_tokens=256,
@@ -457,7 +456,7 @@ def extract_fields_from_ocr(
     keyed by *prefix* for diagnostic purposes.
     """
     if classification_prompt.strip():
-        _classify_document(ocr_text, classification_prompt, prefix, log, model=extraction_model, fields=fields)
+        _classify_document(ocr_text, classification_prompt, prefix, log, model=extraction_model)
 
     if sections:
         log(f"{prefix}Этап 2: извлечение по {len(sections)} разделам моделью {extraction_model}...")
@@ -513,7 +512,7 @@ def extract_fields_dynamic(
     combined_ocr = "\n\n".join(page_texts)
 
     if classification_prompt.strip():
-        _classify_document(combined_ocr, classification_prompt, prefix, log, model=extraction_model, fields=fields)
+        _classify_document(combined_ocr, classification_prompt, prefix, log, model=extraction_model)
 
     if sections:
         log(f"{prefix}Этап 2: извлечение по {len(sections)} разделам моделью {extraction_model}...")
