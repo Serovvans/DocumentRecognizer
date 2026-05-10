@@ -7,7 +7,6 @@ from typing import Callable
 from ollama import chat
 
 from .config import OCR_MODEL, EFFECTIVE_EXTRACTION_MODEL, OCR_PAGE_WORKERS, MULTI_PERMIT_PAGE_THRESHOLD
-from .html_utils import html_tables_to_text
 from .llm import call_text_model
 from .pdf_utils import pdf_to_images_base64
 from .prompt import (
@@ -457,23 +456,19 @@ def extract_fields_from_ocr(
     If *raw_collector* is provided (a dict), raw model responses are stored there
     keyed by *prefix* for diagnostic purposes.
     """
-    # Convert HTML table output to plain text before passing to the extraction LLM.
-    # The original ocr_text (with HTML) is kept intact for OCR auxiliary file saving.
-    extraction_text = html_tables_to_text(ocr_text)
-
     if classification_prompt.strip():
-        _classify_document(extraction_text, classification_prompt, prefix, log, model=extraction_model, fields=fields)
+        _classify_document(ocr_text, classification_prompt, prefix, log, model=extraction_model, fields=fields)
 
     if sections:
         log(f"{prefix}Этап 2: извлечение по {len(sections)} разделам моделью {extraction_model}...")
-        raw = _extract_fields_by_sections(extraction_text, sections, extraction_model, prefix, log)
+        raw = _extract_fields_by_sections(ocr_text, sections, extraction_model, prefix, log)
         result = _postprocess(raw, fields)
         result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
         return result
 
     if per_field:
         log(f"{prefix}Этап 2: извлечение полей по одному (per-field) моделью {extraction_model}...")
-        raw = _extract_fields_per_field(extraction_text, fields, extraction_model, prefix, log)
+        raw = _extract_fields_per_field(ocr_text, fields, extraction_model, prefix, log)
         result = _postprocess(raw, fields)
         result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
         return result
@@ -481,7 +476,7 @@ def extract_fields_from_ocr(
     log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
     messages = [
         {"role": "system", "content": build_extraction_system_prompt_dynamic(fields)},
-        {"role": "user", "content": build_extraction_user_prompt(extraction_text)},
+        {"role": "user", "content": build_extraction_user_prompt(ocr_text)},
     ]
     raw = _extract_with_retry(messages, extraction_model, prefix, log, raw_collector=raw_collector)
     result = _postprocess(raw, fields)
