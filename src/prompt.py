@@ -44,8 +44,6 @@ def build_extraction_system_prompt_dynamic(fields: list[dict]) -> str:
 def build_ocr_prompt() -> str:
     return (
         "Transcribe all text from this document image. "
-        "Render tables as HTML (<table><tr><td>). "
-        "Each table row must include all cells; use <td></td> for empty cells."
     )
 
 
