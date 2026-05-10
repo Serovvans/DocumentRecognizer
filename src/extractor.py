@@ -22,6 +22,8 @@ from .prompt import (
     build_json_fix_prompt,
     build_segmentation_system_prompt,
     build_segmentation_user_prompt,
+    build_spellcheck_system_prompt,
+    build_spellcheck_user_prompt,
 )
 from .json_utils import extract_json, get_last_parse_error
 
@@ -134,6 +136,37 @@ def _extract_with_retry(
             messages.append({"role": "assistant", "content": text})
             messages.append({"role": "user", "content": build_json_fix_prompt(parse_error)})
     raise RuntimeError("unreachable")
+
+
+def _spellcheck_extracted(
+    data: dict,
+    model: str,
+    prefix: str,
+    log: Callable[[str], None],
+) -> dict:
+    """Fix Russian OCR typos in string field values via a dedicated LLM call."""
+    to_fix = {
+        k: v for k, v in data.items()
+        if isinstance(v, str) or (isinstance(v, list) and all(isinstance(i, str) for i in v))
+    }
+    if not to_fix:
+        return data
+
+    log(f"{prefix}Этап: исправление опечаток моделью {model}...")
+    messages = [
+        {"role": "system", "content": build_spellcheck_system_prompt()},
+        {"role": "user", "content": build_spellcheck_user_prompt(to_fix)},
+    ]
+    try:
+        corrected = _extract_with_retry(messages, model, prefix, log)
+        result = dict(data)
+        for k in to_fix:
+            if k in corrected:
+                result[k] = corrected[k]
+        return result
+    except Exception as exc:
+        log(f"{prefix}Исправление опечаток не удалось ({exc}), используем исходный результат")
+        return data
 
 
 _OCR_OPTIONS = {
@@ -447,6 +480,7 @@ def extract_fields_from_ocr(
     sections: list[dict] | None = None,
     prefix: str = "",
     raw_collector: dict | None = None,
+    spellcheck: bool = True,
 ) -> dict:
     """Run LLM field extraction on already-OCR'd text.
 
@@ -454,6 +488,7 @@ def extract_fields_from_ocr(
     *fields* must be a list of dicts with at least a 'name' key.
     If *raw_collector* is provided (a dict), raw model responses are stored there
     keyed by *prefix* for diagnostic purposes.
+    If *spellcheck* is True (default), a post-extraction LLM pass fixes Russian OCR typos.
     """
     if classification_prompt.strip():
         _classify_document(ocr_text, classification_prompt, prefix, log, model=extraction_model)
@@ -463,6 +498,8 @@ def extract_fields_from_ocr(
         raw = _extract_fields_by_sections(ocr_text, sections, extraction_model, prefix, log)
         result = _postprocess(raw, fields)
         result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+        if spellcheck:
+            result = _spellcheck_extracted(result, extraction_model, prefix, log)
         return result
 
     if per_field:
@@ -470,6 +507,8 @@ def extract_fields_from_ocr(
         raw = _extract_fields_per_field(ocr_text, fields, extraction_model, prefix, log)
         result = _postprocess(raw, fields)
         result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+        if spellcheck:
+            result = _spellcheck_extracted(result, extraction_model, prefix, log)
         return result
 
     log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
@@ -480,6 +519,8 @@ def extract_fields_from_ocr(
     raw = _extract_with_retry(messages, extraction_model, prefix, log, raw_collector=raw_collector)
     result = _postprocess(raw, fields)
     result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+    if spellcheck:
+        result = _spellcheck_extracted(result, extraction_model, prefix, log)
     return result
 
 
@@ -492,6 +533,7 @@ def extract_fields_dynamic(
     classification_prompt: str = "",
     per_field: bool = False,
     sections: list[dict] | None = None,
+    spellcheck: bool = True,
 ) -> dict:
     """Like extract_fields but uses caller-supplied field definitions and models.
 
@@ -501,6 +543,8 @@ def extract_fields_dynamic(
     If *per_field* is True, each field is extracted in a separate LLM call
     (parallelised). This reduces the chance of fields being silently skipped
     when the model has to handle many fields at once.
+
+    If *spellcheck* is True (default), a post-extraction LLM pass fixes Russian OCR typos.
     """
     prefix = f"[{pdf_path}] "
     log(f"{prefix}Конвертация PDF в изображения...")
@@ -519,15 +563,17 @@ def extract_fields_dynamic(
         raw = _extract_fields_by_sections(combined_ocr, sections, extraction_model, prefix, log)
         result = _postprocess(raw, fields)
         result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+        if spellcheck:
+            result = _spellcheck_extracted(result, extraction_model, prefix, log)
         return result
-
-    field_names = [f["name"] for f in fields]
 
     if per_field:
         log(f"{prefix}Этап 2: извлечение полей по одному (per-field) моделью {extraction_model}...")
         raw = _extract_fields_per_field(combined_ocr, fields, extraction_model, prefix, log)
         result = _postprocess(raw, fields)
         result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+        if spellcheck:
+            result = _spellcheck_extracted(result, extraction_model, prefix, log)
         return result
 
     log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
@@ -538,4 +584,6 @@ def extract_fields_dynamic(
     raw = _extract_with_retry(messages, extraction_model, prefix, log)
     result = _postprocess(raw, fields)
     result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+    if spellcheck:
+        result = _spellcheck_extracted(result, extraction_model, prefix, log)
     return result
