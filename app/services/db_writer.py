@@ -167,12 +167,12 @@ class DBWriter:
                         self._known_columns.add(name)
                 # Handwriting quality flag
                 cur.execute(
-                    f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi('has_handwriting_issues')} BOOLEAN"
+                    f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi('low_ocr_quality')} BOOLEAN"
                 )
                 cur.execute(
-                    f"ALTER TABLE {t} ALTER COLUMN {_qi('has_handwriting_issues')} DROP NOT NULL"
+                    f"ALTER TABLE {t} ALTER COLUMN {_qi('low_ocr_quality')} DROP NOT NULL"
                 )
-                self._known_columns.add("has_handwriting_issues")
+                self._known_columns.add("low_ocr_quality")
             conn.commit()
         finally:
             self._pool.putconn(conn)
@@ -231,9 +231,9 @@ class DBWriter:
                     col_names.append("source_file")
                     values.append(source_file)
 
-                if "has_handwriting_issues" in data:
-                    col_names.append("has_handwriting_issues")
-                    flag = data["has_handwriting_issues"]
+                if "low_ocr_quality" in data:
+                    col_names.append("low_ocr_quality")
+                    flag = data["low_ocr_quality"]
                     values.append(bool(flag) if flag is not None else None)
 
                 for name, val, db_type in rows_fields:
