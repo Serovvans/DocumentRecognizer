@@ -172,7 +172,7 @@ def _spellcheck_extracted(
 _OCR_OPTIONS = {
     "temperature": 0,
     "num_batch": 2048,
-    "num_predict": 3072,
+    "num_predict": 4096,
 }
 
 

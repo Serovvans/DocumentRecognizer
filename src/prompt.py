@@ -42,9 +42,7 @@ def build_extraction_system_prompt_dynamic(fields: list[dict]) -> str:
 
 
 def build_ocr_prompt() -> str:
-    return (
-        "Transcribe all text from this document image. "
-    )
+    return "<|grounding|>Convert the document to markdown."
 
 
 def build_extraction_system_prompt() -> str:

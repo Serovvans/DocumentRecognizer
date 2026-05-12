@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OCR_MODEL: str = os.getenv("OCR_MODEL", "glm-ocr")
+OCR_MODEL: str = os.getenv("OCR_MODEL", "deepseek-ocr")
 EXTRACTION_MODEL: str = os.getenv("EXTRACTION_MODEL", "qwen2.5:14b-instruct-q4_K_M")
 
 # "ollama" uses local Ollama models; "gigachat" uses GigaChat API via LangChain
