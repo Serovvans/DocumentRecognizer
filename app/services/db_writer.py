@@ -264,7 +264,7 @@ class DBWriter:
                     col_names.append("source_file")
                     values.append(source_file)
 
-                if "has_handwriting_issues" in data:
+                if "low_ocr_quality" in data:
                     col_names.append("low_ocr_quality")
                     flag = data["low_ocr_quality"]
                     values.append(bool(flag) if flag is not None else None)
