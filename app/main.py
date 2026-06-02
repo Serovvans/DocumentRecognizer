@@ -5,8 +5,11 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+from app.logging_config import setup_logging
 from app.routers import presets, process, export
 from app.config import PRESETS_DIR, OUTPUT_DIR
+
+setup_logging()
 
 STATIC_DIR = Path(__file__).parent / "static"
 

@@ -40,3 +40,4 @@ EXTRACT_WORKERS: int = int(os.getenv("EXTRACT_WORKERS", "1"))
 # Paths
 PRESETS_DIR: Path = BASE_DIR / "presets"
 OUTPUT_DIR: Path = BASE_DIR / "output"
+LOGS_DIR: Path = BASE_DIR / "logs"

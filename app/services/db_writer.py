@@ -1,3 +1,4 @@
+import logging
 import threading
 from datetime import datetime
 
@@ -6,6 +7,8 @@ import psycopg2.pool
 from sshtunnel import SSHTunnelForwarder
 
 from app import config as cfg
+
+logger = logging.getLogger(__name__)
 
 
 def _qi(name: str) -> str:
@@ -108,18 +111,35 @@ class DBWriter:
         if cfg.SSH_KEY_FILE:
             tunnel_kwargs["ssh_pkey"] = cfg.SSH_KEY_FILE
 
-        self._tunnel = SSHTunnelForwarder(**tunnel_kwargs)
-        self._tunnel.start()
+        try:
+            self._tunnel = SSHTunnelForwarder(**tunnel_kwargs)
+            self._tunnel.start()
+        except Exception:
+            logger.error(
+                "SSH tunnel failed  host=%s:%s  user=%s",
+                cfg.SSH_HOST, cfg.SSH_PORT, cfg.SSH_USERNAME,
+                exc_info=True,
+            )
+            raise
 
-        self._pool = psycopg2.pool.ThreadedConnectionPool(
-            1,
-            max(2, max_workers + 1),
-            host="127.0.0.1",
-            port=self._tunnel.local_bind_port,
-            database=self._db_name,
-            user=self._db_user,
-            password=self._db_password,
-        )
+        try:
+            self._pool = psycopg2.pool.ThreadedConnectionPool(
+                1,
+                max(2, max_workers + 1),
+                host="127.0.0.1",
+                port=self._tunnel.local_bind_port,
+                database=self._db_name,
+                user=self._db_user,
+                password=self._db_password,
+            )
+        except Exception:
+            logger.error(
+                "DB connection pool failed  db=%s  user=%s",
+                self._db_name, self._db_user,
+                exc_info=True,
+            )
+            raise
+
         self._ensure_columns()
 
     def stop(self) -> None:
@@ -127,12 +147,12 @@ class DBWriter:
             try:
                 self._pool.closeall()
             except Exception:
-                pass
+                logger.warning("Error closing DB pool", exc_info=True)
         if self._tunnel:
             try:
                 self._tunnel.stop()
             except Exception:
-                pass
+                logger.warning("Error stopping SSH tunnel", exc_info=True)
 
     # ── schema management ────────────────────────────────────────────────────
 
@@ -174,6 +194,11 @@ class DBWriter:
                 )
                 self._known_columns.add("low_ocr_quality")
             conn.commit()
+        except Exception:
+            logger.error(
+                "_ensure_columns failed  table=%s.%s", self.schema, self.table, exc_info=True
+            )
+            raise
         finally:
             self._pool.putconn(conn)
 
@@ -184,12 +209,20 @@ class DBWriter:
                 return
             t = f"{_qi(self.schema)}.{_qi(self.table)}"
             col_type = _sql_type(db_type)
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(col_name)} {col_type}"
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {_qi(col_name)} {col_type}"
+                    )
+                conn.commit()
+                self._known_columns.add(col_name)
+            except Exception:
+                logger.error(
+                    "_add_column failed  table=%s.%s  column=%s  type=%s",
+                    self.schema, self.table, col_name, col_type,
+                    exc_info=True,
                 )
-            conn.commit()
-            self._known_columns.add(col_name)
+                raise
 
     # ── write ────────────────────────────────────────────────────────────────
 
@@ -271,6 +304,7 @@ class DBWriter:
                 pass
             with self._lock:
                 self.errors += 1
+            logger.error("write failed  source=%s", source_file, exc_info=True)
             raise
         finally:
             self._pool.putconn(conn)
