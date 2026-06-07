@@ -20,10 +20,14 @@ DB_NAME: str = os.getenv("DB_NAME", "postgres")
 DB_USER: str = os.getenv("DB_USER", "postgres")
 DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
 
-# Ollama
+# Ollama (extraction stage only — OCR runs via EasyOCR/PyTorch)
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OCR_MODEL: str = os.getenv("OCR_MODEL", "glm-ocr")
 EXTRACTION_MODEL: str = os.getenv("EXTRACTION_MODEL", "qwen2.5:14b-instruct-q4_K_M")
+
+# EasyOCR (Stage 1)
+EASYOCR_LANGUAGES: list[str] = os.getenv("EASYOCR_LANGUAGES", "ru,en").split(",")
+EASYOCR_GPU: bool = os.getenv("EASYOCR_GPU", "true").lower() not in ("false", "0", "no")
+EASYOCR_CONFIDENCE_THRESHOLD: float = float(os.getenv("EASYOCR_CONFIDENCE_THRESHOLD", "0.3"))
 
 # Extraction backend: "ollama" (local) or "gigachat" (API via LangChain)
 EXTRACTION_BACKEND: str = os.getenv("EXTRACTION_BACKEND", "ollama")

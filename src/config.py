@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OCR_MODEL: str = os.getenv("OCR_MODEL", "deepseek-ocr")
+EASYOCR_LANGUAGES: list[str] = os.getenv("EASYOCR_LANGUAGES", "ru,en").split(",")
+EASYOCR_GPU: bool = os.getenv("EASYOCR_GPU", "true").lower() not in ("false", "0", "no")
+EASYOCR_CONFIDENCE_THRESHOLD: float = float(os.getenv("EASYOCR_CONFIDENCE_THRESHOLD", "0.3"))
 EXTRACTION_MODEL: str = os.getenv("EXTRACTION_MODEL", "qwen2.5:14b-instruct-q4_K_M")
 
 # "ollama" uses local Ollama models; "gigachat" uses GigaChat API via LangChain
@@ -25,7 +27,7 @@ MAX_WORKERS = 4
 EXTRACT_WORKERS: int = int(os.getenv("EXTRACT_WORKERS", "1"))
 
 # Число страниц одного документа, OCR которых идёт параллельно.
-# Ollama умеет очередить запросы к одной модели, поэтому 2–4 дают реальный выигрыш.
+# EasyOCR использует общий Reader-синглтон; 2–4 потока дают реальный выигрыш на GPU.
 # Увеличивать сверх 4 смысла нет — GPU всё равно один.
 OCR_PAGE_WORKERS = 4
 

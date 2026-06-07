@@ -4,13 +4,13 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
-from ollama import chat
-
-from .config import OCR_MODEL, EFFECTIVE_EXTRACTION_MODEL, OCR_PAGE_WORKERS, MULTI_PERMIT_PAGE_THRESHOLD
+from .config import (
+    EASYOCR_LANGUAGES, EASYOCR_GPU, EASYOCR_CONFIDENCE_THRESHOLD,
+    EFFECTIVE_EXTRACTION_MODEL, OCR_PAGE_WORKERS, MULTI_PERMIT_PAGE_THRESHOLD,
+)
 from .llm import call_text_model
-from .pdf_utils import pdf_to_images_base64
+from .pdf_utils import pdf_to_images_np
 from .prompt import (
-    build_ocr_prompt,
     build_extraction_system_prompt,
     build_extraction_system_prompt_dynamic,
     build_extraction_user_prompt,
@@ -26,6 +26,104 @@ from .prompt import (
     build_spellcheck_user_prompt,
 )
 from .json_utils import extract_json, get_last_parse_error
+
+_easyocr_lock = threading.Lock()
+_easyocr_reader = None
+
+
+def _get_easyocr_reader():
+    """Lazy singleton — loads EasyOCR model once into GPU memory."""
+    global _easyocr_reader
+    if _easyocr_reader is None:
+        with _easyocr_lock:
+            if _easyocr_reader is None:
+                import easyocr
+                _easyocr_reader = easyocr.Reader(
+                    EASYOCR_LANGUAGES, gpu=EASYOCR_GPU, verbose=False
+                )
+    return _easyocr_reader
+
+
+def _reconstruct_layout(
+    detections: list,
+    confidence_threshold: float = EASYOCR_CONFIDENCE_THRESHOLD,
+) -> str:
+    """Convert EasyOCR (bbox, text, confidence) list to text with HTML tables.
+
+    Adjacent text blocks on the same row separated by a gap > 4% of page width
+    are wrapped in <table><tr><td> tags — matching the format the LLM extraction
+    prompt expects.
+    """
+    import statistics
+
+    if not detections:
+        return ""
+
+    blocks = []
+    for bbox, text, conf in detections:
+        if conf < confidence_threshold:
+            continue
+        xs = [p[0] for p in bbox]
+        ys = [p[1] for p in bbox]
+        x1, x2 = min(xs), max(xs)
+        y1, y2 = min(ys), max(ys)
+        blocks.append({
+            "text": text.strip(), "x1": x1, "x2": x2,
+            "y1": y1, "y2": y2, "cy": (y1 + y2) / 2, "h": y2 - y1,
+        })
+
+    if not blocks:
+        return ""
+
+    median_h = statistics.median(b["h"] for b in blocks)
+    page_width = max(b["x2"] for b in blocks) - min(b["x1"] for b in blocks)
+    row_threshold = 0.6 * median_h        # vertical tolerance for same-row grouping
+    col_gap_threshold = 0.04 * page_width  # gap that signals a column boundary
+
+    blocks.sort(key=lambda b: (b["y1"], b["x1"]))
+
+    rows: list[list[dict]] = []
+    cur: list[dict] = [blocks[0]]
+    for b in blocks[1:]:
+        if abs(b["cy"] - cur[-1]["cy"]) <= row_threshold:
+            cur.append(b)
+        else:
+            rows.append(sorted(cur, key=lambda b: b["x1"]))
+            cur = [b]
+    rows.append(sorted(cur, key=lambda b: b["x1"]))
+
+    lines: list[str] = []
+    in_table = False
+
+    def close_table():
+        nonlocal in_table
+        if in_table:
+            lines.append("</table>")
+            in_table = False
+
+    def open_table():
+        nonlocal in_table
+        if not in_table:
+            lines.append("<table>")
+            in_table = True
+
+    for row in rows:
+        if len(row) == 1:
+            close_table()
+            lines.append(row[0]["text"])
+        else:
+            gaps = [row[i + 1]["x1"] - row[i]["x2"] for i in range(len(row) - 1)]
+            if any(g > col_gap_threshold for g in gaps):
+                open_table()
+                cells = "".join(f"<td>{b['text']}</td>" for b in row)
+                lines.append(f"  <tr>{cells}</tr>")
+            else:
+                close_table()
+                lines.append(" ".join(b["text"] for b in row))
+
+    close_table()
+    return "\n".join(lines)
+
 
 _MAX_JSON_RETRIES = 3
 
@@ -169,48 +267,30 @@ def _spellcheck_extracted(
         return data
 
 
-_OCR_OPTIONS = {
-    "temperature": 0,
-    "num_batch": 2048,
-    "num_predict": 4096,
-}
-
-
 def _ocr_page(
-    image_b64: str,
+    image_np,
     page_num: int,
     prefix: str,
     log: Callable[[str], None],
-    ocr_model: str = OCR_MODEL,
 ) -> str:
-    log(f"{prefix}  OCR страницы {page_num} ({ocr_model})...")
-    response = chat(
-        model=ocr_model,
-        messages=[
-            {
-                "role": "user",
-                "content": build_ocr_prompt(),
-                "images": [image_b64],
-            }
-        ],
-        options=_OCR_OPTIONS,
-    )
-    return response.message.content or ""
+    log(f"{prefix}  OCR страницы {page_num} (EasyOCR)...")
+    reader = _get_easyocr_reader()
+    detections = reader.readtext(image_np, detail=1, paragraph=False)
+    return _reconstruct_layout(detections)
 
 
 def _ocr_pages_parallel(
-    images: list[str],
+    images: list,
     prefix: str,
     log: Callable[[str], None],
-    ocr_model: str = OCR_MODEL,
     max_workers: int = 4,
 ) -> list[str]:
     """OCR all pages concurrently; returns texts in page order."""
     results: dict[int, str] = {}
 
-    def _task(args: tuple[int, str]) -> tuple[int, str]:
-        page_num, image_b64 = args
-        return page_num, _ocr_page(image_b64, page_num, prefix, log, ocr_model)
+    def _task(args: tuple) -> tuple[int, str]:
+        page_num, image_np = args
+        return page_num, _ocr_page(image_np, page_num, prefix, log)
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_task, (i, img)): i for i, img in enumerate(images, start=1)}
@@ -312,9 +392,9 @@ def detect_and_split_permits(
 def extract_fields(pdf_path: str, log: Callable[[str], None] = _default_log) -> dict:
     prefix = f"[{pdf_path}] "
     log(f"{prefix}Конвертация PDF в изображения...")
-    images = pdf_to_images_base64(pdf_path)
+    images = pdf_to_images_np(pdf_path)
 
-    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {OCR_MODEL} (параллельно, {OCR_PAGE_WORKERS} потоков)...")
+    log(f"{prefix}Этап 1: распознавание {len(images)} страниц (EasyOCR, {OCR_PAGE_WORKERS} потоков)...")
     page_texts = _ocr_pages_parallel(images, prefix, log, max_workers=OCR_PAGE_WORKERS)
 
     combined_ocr = "\n\n".join(page_texts)
@@ -456,15 +536,14 @@ def _classify_document(
 
 def ocr_document(
     pdf_path: str,
-    ocr_model: str = OCR_MODEL,
     log: Callable[[str], None] = _default_log,
 ) -> str:
     """OCR all pages of *pdf_path*; return concatenated text with page separators."""
     prefix = f"[{pdf_path}] "
     log(f"{prefix}Конвертация PDF в изображения...")
-    images = pdf_to_images_base64(pdf_path)
-    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {ocr_model} (параллельно, {OCR_PAGE_WORKERS} потоков)...")
-    page_texts = _ocr_pages_parallel(images, prefix, log, ocr_model=ocr_model, max_workers=OCR_PAGE_WORKERS)
+    images = pdf_to_images_np(pdf_path)
+    log(f"{prefix}Этап 1: распознавание {len(images)} страниц (EasyOCR, {OCR_PAGE_WORKERS} потоков)...")
+    page_texts = _ocr_pages_parallel(images, prefix, log, max_workers=OCR_PAGE_WORKERS)
     combined_ocr = "\n\n".join(page_texts)
     log(f"{prefix}--- Результат OCR ---\n{combined_ocr}\n{prefix}--- Конец OCR ---")
     return combined_ocr
@@ -528,7 +607,6 @@ def extract_fields_dynamic(
     pdf_path: str,
     fields: list[dict],
     log: Callable[[str], None] = _default_log,
-    ocr_model: str = OCR_MODEL,
     extraction_model: str = EFFECTIVE_EXTRACTION_MODEL,
     classification_prompt: str = "",
     per_field: bool = False,
@@ -548,10 +626,10 @@ def extract_fields_dynamic(
     """
     prefix = f"[{pdf_path}] "
     log(f"{prefix}Конвертация PDF в изображения...")
-    images = pdf_to_images_base64(pdf_path)
+    images = pdf_to_images_np(pdf_path)
 
-    log(f"{prefix}Этап 1: распознавание {len(images)} страниц моделью {ocr_model} (параллельно, {OCR_PAGE_WORKERS} потоков)...")
-    page_texts = _ocr_pages_parallel(images, prefix, log, ocr_model=ocr_model, max_workers=OCR_PAGE_WORKERS)
+    log(f"{prefix}Этап 1: распознавание {len(images)} страниц (EasyOCR, {OCR_PAGE_WORKERS} потоков)...")
+    page_texts = _ocr_pages_parallel(images, prefix, log, max_workers=OCR_PAGE_WORKERS)
 
     combined_ocr = "\n\n".join(page_texts)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Extractor of fields from scanned construction permit PDFs.
-Phase 1 (parallel): glm-ocr recognizes text and tables from each page.
+Phase 1 (parallel): EasyOCR recognizes text and tables from each page.
 Phase 2 (serial):   LLM extracts structured fields from OCR text into JSON.
 """
 

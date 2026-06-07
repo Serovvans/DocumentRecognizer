@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
-from app.config import OCR_MODEL, EFFECTIVE_EXTRACTION_MODEL, EXTRACT_WORKERS
+from app.config import EFFECTIVE_EXTRACTION_MODEL, EXTRACT_WORKERS
 from src.extractor import ocr_document, extract_fields_from_ocr, detect_and_split_permits, DocumentRejected
 
 
@@ -64,7 +64,7 @@ def process_documents(
     ocr_done_count = 0
 
     def _ocr_one(path: str) -> tuple[str, str]:
-        return path, ocr_document(path, ocr_model=OCR_MODEL)
+        return path, ocr_document(path)
 
     with ThreadPoolExecutor(max_workers=ocr_workers) as pool:
         ocr_futures = {pool.submit(_ocr_one, p): p for p in pdf_paths}

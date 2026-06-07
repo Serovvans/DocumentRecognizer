@@ -1,8 +1,8 @@
 # Document Recognizer
 
-Веб-приложение для пакетного распознавания полей из отсканированных PDF-документов с помощью локальных моделей Ollama.
+Веб-приложение для пакетного распознавания полей из отсканированных PDF-документов с помощью EasyOCR и локальных моделей Ollama.
 
-**Конвейер на документ:** OCR каждой страницы (`glm-ocr`) → извлечение полей (`llama3.1:8b`) → JSON / PostgreSQL.
+**Конвейер на документ:** OCR каждой страницы (`EasyOCR`, языки `ru`+`en`) → извлечение полей (`qwen2.5:14b`) → JSON / PostgreSQL.
 
 ---
 
@@ -25,50 +25,71 @@
 |-----------|--------|
 | Python | 3.11+ |
 | [Ollama](https://ollama.com) | последняя |
-| Модель `glm-ocr` | `ollama pull glm-ocr` |
-| Модель `llama3.1:8b` | `ollama pull llama3.1:8b` |
+| Модель `qwen2.5:14b` | `ollama pull qwen2.5:14b-instruct-q4_K_M` |
+| EasyOCR | устанавливается через `requirements.txt` |
+| PyTorch (CUDA) | устанавливается отдельно (см. ниже) |
 
 ---
 
 ## Установка
 
-### macOS / Linux
+### 1. Установить PyTorch с поддержкой GPU (до `pip install -r requirements.txt`)
 
 ```bash
-# 1. Клонировать / перейти в папку
+# CUDA 12.1 (RTX 30xx / 40xx и новее):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# CUDA 11.8 (старые карты):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# CPU only (очень медленно, не рекомендуется):
+pip install torch torchvision
+```
+
+### 2. Установить зависимости и запустить
+
+#### macOS / Linux
+
+```bash
 cd DocumentRecognizer_v1
 
-# 2. Создать виртуальное окружение
 python3 -m venv .venv
 source .venv/bin/activate
 
-# 3. Установить зависимости
+# Сначала PyTorch (см. выше), затем:
 pip install -r requirements.txt
 
-# 4. Скопировать и заполнить конфиг
 cp .env.example .env
-# отредактируйте .env — укажите SSH и БД реквизиты
+# отредактируйте .env — укажите SSH и БД реквизиты (если нужна запись в БД)
 ```
 
-### Windows
+#### Windows
 
 ```powershell
-# 1. Перейти в папку
 cd DocumentRecognizer_v1
 
-# 2. Виртуальное окружение
 python -m venv .venv
 .venv\Scripts\activate
 
-# 3. Зависимости
+# Сначала PyTorch (см. выше), затем:
 pip install -r requirements.txt
 
-# 4. Конфиг
 copy .env.example .env
 # откройте .env в редакторе и заполните реквизиты
 ```
 
-> **Примечание для Windows:** `psycopg2-binary` устанавливается как есть. Если возникнет ошибка, установите [Visual C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
+### 3. Запустить Ollama с моделью извлечения
+
+```bash
+ollama serve
+ollama pull qwen2.5:14b-instruct-q4_K_M
+```
+
+### 4. Проверить EasyOCR
+
+```bash
+python -c "import easyocr; r = easyocr.Reader(['ru','en'], gpu=True); print('EasyOCR OK')"
+```
 
 ---
 
@@ -89,10 +110,14 @@ DB_NAME=postgres
 DB_USER=postgres
 DB_PASSWORD=secret
 
-# Модели Ollama
+# Ollama (только для этапа извлечения — OCR работает через EasyOCR/PyTorch)
 OLLAMA_BASE_URL=http://localhost:11434
-OCR_MODEL=glm-ocr
-EXTRACTION_MODEL=llama3.1:8b
+EXTRACTION_MODEL=qwen2.5:14b-instruct-q4_K_M
+
+# EasyOCR (этап OCR)
+EASYOCR_LANGUAGES=ru,en
+EASYOCR_GPU=true
+EASYOCR_CONFIDENCE_THRESHOLD=0.3
 ```
 
 Если запись в БД не нужна, файл `.env` можно оставить пустым — приложение работает без него.
@@ -102,11 +127,9 @@ EXTRACTION_MODEL=llama3.1:8b
 ## Запуск
 
 ```bash
-# убедитесь, что виртуальное окружение активно
 source .venv/bin/activate        # macOS/Linux
 # .venv\Scripts\activate         # Windows
 
-# запустить сервер
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8007
 ```
 
@@ -127,7 +150,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8007
 
 3. **Пресеты** — сохраните набор полей под именем, чтобы переиспользовать позже.
 
-4. **Параллельных потоков** — 1–8 (обычно = числу GPU, которое может одновременно обслуживать Ollama).
+4. **Параллельных потоков** — 1–8. EasyOCR использует один общий Reader на GPU, поэтому 2–4 потока дают хороший выигрыш.
 
 5. **База данных** (опционально) — включите переключатель, укажите схему и таблицу.  
    Таблица должна существовать; недостающие колонки добавляются автоматически.  
@@ -177,8 +200,6 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8007
 
 ## CLI (оригинальный режим)
 
-Оригинальный CLI из предыдущей версии сохранён без изменений:
-
 ```bash
 python main.py data/doc1.pdf data/doc2.pdf
 ```
@@ -204,8 +225,8 @@ DocumentRecognizer_v1/
 │   │   └── db_writer.py    # Запись в PostgreSQL
 │   └── static/             # Фронтенд (HTML/CSS/JS)
 ├── src/                    # Ядро pipeline (OCR + extraction)
-│   ├── extractor.py
-│   ├── pdf_utils.py
+│   ├── extractor.py        # EasyOCR + реконструкция разметки + LLM извлечение
+│   ├── pdf_utils.py        # PDF → numpy array (EasyOCR) / base64 (превью)
 │   ├── prompt.py
 │   ├── json_utils.py
 │   └── config.py
@@ -219,10 +240,23 @@ DocumentRecognizer_v1/
 
 ---
 
+## Настройка качества OCR
+
+В `src/extractor.py` функция `_reconstruct_layout` имеет два параметра для тонкой настройки:
+
+| Параметр | Умолч. | Назначение |
+|----------|--------|-----------|
+| `row_threshold` | `0.6 × median_h` | Допуск по вертикали для объединения в одну строку |
+| `col_gap_threshold` | `0.04 × page_width` | Минимальный горизонтальный зазор между колонками таблицы |
+
+Если таблицы распознаются как обычный текст — уменьшите `col_gap_threshold`. Если обычный текст разбивается на таблицы — увеличьте.
+
+---
+
 ## Известные ограничения
 
 - Скорость обработки зависит от GPU и выбранных моделей.  
-  Типичное время: 30–120 с на документ при 4–6 страницах.
+  Типичное время: 15–60 с на документ при 4–6 страницах (EasyOCR + GPU значительно быстрее glm-ocr).
 - Очень большие PDF (50+ страниц) могут занять много времени.
-- Ollama обрабатывает запросы последовательно на одном GPU — увеличение числа потоков помогает только при нескольких GPU или многоядерном CPU (CPU-inference).
+- EasyOCR загружает модель один раз при первом запросе (~300 МБ в VRAM); последующие страницы обрабатываются быстро.
 - Для записи в БД таблица должна существовать заранее и иметь первичный ключ.
