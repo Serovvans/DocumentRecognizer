@@ -37,7 +37,16 @@ def _get_easyocr_reader():
     if _easyocr_reader is None:
         with _easyocr_lock:
             if _easyocr_reader is None:
+                import torch
                 import easyocr
+                if EASYOCR_GPU and not torch.cuda.is_available():
+                    print(
+                        "[WARN] EASYOCR_GPU=true, но torch.cuda.is_available()=False. "
+                        "PyTorch установлен без поддержки CUDA. "
+                        "Исправление: pip install torch torchvision "
+                        "--index-url https://download.pytorch.org/whl/cu124 --force-reinstall",
+                        file=sys.stderr,
+                    )
                 _easyocr_reader = easyocr.Reader(
                     EASYOCR_LANGUAGES, gpu=EASYOCR_GPU, verbose=False
                 )

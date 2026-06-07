@@ -1,10 +1,15 @@
 # OCR / PDF
 pymupdf>=1.24.0
 easyocr>=1.7.0
-# EasyOCR requires PyTorch. On GPU machine install CUDA build FIRST (before pip install -r):
-#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-# CPU only (slow, not recommended):
-#   pip install torch torchvision
+# EasyOCR requires PyTorch. On GPU machine use setup_gpu.sh OR install CUDA PyTorch FIRST:
+#   CUDA 12.x (RTX 30xx/40xx/50xx, driver 12.0+):
+#     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+#   CUDA 11.8 (старые карты):
+#     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#   CPU only (медленно):
+#     pip install torch torchvision
+# ВАЖНО: если установить easyocr ДО PyTorch с CUDA, pip поставит CPU-torch из PyPI.
+# Для исправления: pip install torch torchvision --index-url .../cu124 --force-reinstall
 
 # Extraction LLM backend (Ollama)
 ollama>=0.4.0

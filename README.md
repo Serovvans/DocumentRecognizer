@@ -33,62 +33,59 @@
 
 ## Установка
 
-### 1. Установить PyTorch с поддержкой GPU (до `pip install -r requirements.txt`)
+### Быстрая установка (рекомендуется)
 
 ```bash
-# CUDA 12.1 (RTX 30xx / 40xx и новее):
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+cd DocumentRecognizer_v1
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+
+bash setup_gpu.sh           # устанавливает PyTorch CUDA + зависимости + проверяет GPU
+```
+
+`setup_gpu.sh` делает всё в правильном порядке: PyTorch с CUDA → остальные пакеты → проверка.
+
+---
+
+### Ручная установка
+
+> **Важно:** PyTorch с CUDA нужно установить **до** `pip install -r requirements.txt`, иначе pip поставит CPU-сборку torch как зависимость EasyOCR.
+
+```bash
+cd DocumentRecognizer_v1
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+
+# 1. PyTorch с CUDA (CUDA 12.x — CUDA driver 12.0 и новее, включая 12.9):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 
 # CUDA 11.8 (старые карты):
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
-# CPU only (очень медленно, не рекомендуется):
-pip install torch torchvision
+# 2. Проверить что PyTorch видит GPU:
+python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
+
+# 3. Остальные зависимости:
+pip install -r requirements.txt
+
+# 4. Конфиг:
+cp .env.example .env
 ```
 
-### 2. Установить зависимости и запустить
+### Если GPU не видит (исправление)
 
-#### macOS / Linux
+Если PyTorch уже установлен без CUDA (например, запустили `pip install -r requirements.txt` первым):
 
 ```bash
-cd DocumentRecognizer_v1
-
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Сначала PyTorch (см. выше), затем:
-pip install -r requirements.txt
-
-cp .env.example .env
-# отредактируйте .env — укажите SSH и БД реквизиты (если нужна запись в БД)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
+python -c "import torch; print(torch.cuda.is_available())"  # должно быть True
 ```
 
-#### Windows
-
-```powershell
-cd DocumentRecognizer_v1
-
-python -m venv .venv
-.venv\Scripts\activate
-
-# Сначала PyTorch (см. выше), затем:
-pip install -r requirements.txt
-
-copy .env.example .env
-# откройте .env в редакторе и заполните реквизиты
-```
-
-### 3. Запустить Ollama с моделью извлечения
+### Запустить Ollama с моделью извлечения
 
 ```bash
 ollama serve
 ollama pull qwen2.5:14b-instruct-q4_K_M
-```
-
-### 4. Проверить EasyOCR
-
-```bash
-python -c "import easyocr; r = easyocr.Reader(['ru','en'], gpu=True); print('EasyOCR OK')"
 ```
 
 ---
