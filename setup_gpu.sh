@@ -4,8 +4,8 @@
 # the CPU-only torch from PyPI as a transitive dependency.
 set -e
 
-echo "=== Step 1: PyTorch with CUDA 12.x ==="
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+echo "=== Step 1: PyTorch with CUDA 12.8 (cu128 — supports sm_120 / Blackwell) ==="
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
 echo "=== Step 2: project dependencies ==="
 pip install -r requirements.txt
