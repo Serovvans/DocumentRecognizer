@@ -13,6 +13,7 @@ class FieldDef(BaseModel):
     multi_value_mode: str = "rows"
     db_type: str = "text"
     allow_list: bool = False
+    transform: str = ""  # тело Python-функции (value -> результат) для проверки/форматирования
 
 
 class SectionDef(BaseModel):

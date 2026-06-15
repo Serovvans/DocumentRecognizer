@@ -1,7 +1,11 @@
+import datetime
+import math
 import re
 import sys
+import textwrap
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from typing import Callable
 
 from .config import (
@@ -181,6 +185,79 @@ def _postprocess(result: dict, fields: list) -> dict:
         else:
             out[name] = val
     return out
+
+
+_TRANSFORM_GLOBALS = {"re": re, "datetime": datetime, "math": math}
+
+
+@lru_cache(maxsize=256)
+def _compile_transform(code: str):
+    """Compile a user-supplied field-transform body into a callable f(value).
+
+    The *code* is treated as a function body with `value` in scope; the result is
+    returned via `return`. Available modules: re, datetime, math. Compilation is
+    cached by source text. Raises on syntax errors (handled by the caller).
+    """
+    src = "def __t__(value):\n" + textwrap.indent(code, "    ")
+    ns = dict(_TRANSFORM_GLOBALS)
+    exec(compile(src, "<field-transform>", "exec"), ns)
+    return ns["__t__"]
+
+
+def _apply_custom_formatters(
+    result: dict,
+    fields: list,
+    log: Callable[[str], None],
+    prefix: str = "",
+) -> dict:
+    """Run each field's optional custom Python transform as the final cleanup step.
+
+    Applied element-wise to lists; `None` is passed through untouched. Compilation
+    or runtime errors never break extraction — the original value is kept and a
+    warning is logged. A transform may return `None` to reject an invalid value.
+    """
+    for f in fields:
+        if isinstance(f, str):
+            continue
+        code = (f.get("transform") or "").strip()
+        if not code:
+            continue
+        name = f["name"]
+        try:
+            fn = _compile_transform(code)
+        except Exception as exc:
+            log(f"{prefix}Поле «{name}»: ошибка компиляции функции форматирования ({exc}), пропуск")
+            continue
+
+        def _one(v):
+            if v is None:
+                return None
+            try:
+                return fn(v)
+            except Exception as exc:
+                log(f"{prefix}Поле «{name}»: функция форматирования упала на значении {v!r} ({exc})")
+                return v
+
+        val = result.get(name)
+        result[name] = [_one(v) for v in val] if isinstance(val, list) else _one(val)
+    return result
+
+
+def _finalize(
+    raw: dict,
+    fields: list,
+    extraction_model: str,
+    prefix: str,
+    log: Callable[[str], None],
+    spellcheck: bool,
+) -> dict:
+    """Shared post-extraction pipeline: postprocess → handwriting flag → spellcheck → custom transforms."""
+    result = _postprocess(raw, fields)
+    result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
+    if spellcheck:
+        result = _spellcheck_extracted(result, extraction_model, prefix, log)
+    result = _apply_custom_formatters(result, fields, log, prefix)
+    return result
 
 
 def _has_handwriting_issues(data: dict, fields: list) -> bool:
@@ -584,20 +661,12 @@ def extract_fields_from_ocr(
     if sections:
         log(f"{prefix}Этап 2: извлечение по {len(sections)} разделам моделью {extraction_model}...")
         raw = _extract_fields_by_sections(ocr_text, sections, extraction_model, prefix, log)
-        result = _postprocess(raw, fields)
-        result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
-        if spellcheck:
-            result = _spellcheck_extracted(result, extraction_model, prefix, log)
-        return result
+        return _finalize(raw, fields, extraction_model, prefix, log, spellcheck)
 
     if per_field:
         log(f"{prefix}Этап 2: извлечение полей по одному (per-field) моделью {extraction_model}...")
         raw = _extract_fields_per_field(ocr_text, fields, extraction_model, prefix, log)
-        result = _postprocess(raw, fields)
-        result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
-        if spellcheck:
-            result = _spellcheck_extracted(result, extraction_model, prefix, log)
-        return result
+        return _finalize(raw, fields, extraction_model, prefix, log, spellcheck)
 
     log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
     messages = [
@@ -605,11 +674,7 @@ def extract_fields_from_ocr(
         {"role": "user", "content": build_extraction_user_prompt(ocr_text)},
     ]
     raw = _extract_with_retry(messages, extraction_model, prefix, log, raw_collector=raw_collector)
-    result = _postprocess(raw, fields)
-    result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
-    if spellcheck:
-        result = _spellcheck_extracted(result, extraction_model, prefix, log)
-    return result
+    return _finalize(raw, fields, extraction_model, prefix, log, spellcheck)
 
 
 def extract_fields_dynamic(
@@ -648,20 +713,12 @@ def extract_fields_dynamic(
     if sections:
         log(f"{prefix}Этап 2: извлечение по {len(sections)} разделам моделью {extraction_model}...")
         raw = _extract_fields_by_sections(combined_ocr, sections, extraction_model, prefix, log)
-        result = _postprocess(raw, fields)
-        result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
-        if spellcheck:
-            result = _spellcheck_extracted(result, extraction_model, prefix, log)
-        return result
+        return _finalize(raw, fields, extraction_model, prefix, log, spellcheck)
 
     if per_field:
         log(f"{prefix}Этап 2: извлечение полей по одному (per-field) моделью {extraction_model}...")
         raw = _extract_fields_per_field(combined_ocr, fields, extraction_model, prefix, log)
-        result = _postprocess(raw, fields)
-        result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
-        if spellcheck:
-            result = _spellcheck_extracted(result, extraction_model, prefix, log)
-        return result
+        return _finalize(raw, fields, extraction_model, prefix, log, spellcheck)
 
     log(f"{prefix}Этап 2: извлечение полей моделью {extraction_model}...")
     messages = [
@@ -669,8 +726,4 @@ def extract_fields_dynamic(
         {"role": "user", "content": build_extraction_user_prompt(combined_ocr)},
     ]
     raw = _extract_with_retry(messages, extraction_model, prefix, log)
-    result = _postprocess(raw, fields)
-    result["has_handwriting_issues"] = _has_handwriting_issues(result, fields)
-    if spellcheck:
-        result = _spellcheck_extracted(result, extraction_model, prefix, log)
-    return result
+    return _finalize(raw, fields, extraction_model, prefix, log, spellcheck)

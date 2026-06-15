@@ -341,6 +341,31 @@
   </div>
 </div>
 
+<!-- Transform (custom function) editor modal -->
+<div id="transform-modal" class="modal hidden">
+  <div class="modal-backdrop" onclick="closeTransformEditor()"></div>
+  <div class="modal-box modal-box-narrow">
+    <div class="modal-head">
+      <h3 class="modal-title">Функция проверки / форматирования — <span id="transform-field-name"></span></h3>
+      <button class="btn-icon modal-close" onclick="closeTransformEditor()" title="Закрыть">×</button>
+    </div>
+    <div class="modal-body">
+      <p class="transform-hint">
+        Тело Python-функции. Доступна переменная <code>value</code> (значение поля),
+        верните результат через <code>return</code>. Доступны модули <code>re</code>, <code>datetime</code>, <code>math</code>.
+        Для полей-списков функция применяется к каждому элементу; <code>None</code> пропускается.
+        Верните <code>None</code>, чтобы отбраковать значение. Ошибки не ломают извлечение — значение остаётся сырым.
+      </p>
+      <textarea id="transform-code" class="transform-code" rows="12" spellcheck="false"
+        placeholder="m = re.search(r'(\d{1,2})\.(\d{1,2})\.(\d{4})', value)&#10;if not m:&#10;    return None&#10;d, mo, y = m.groups()&#10;return f'{int(d):02d}.{int(mo):02d}.{y}'"></textarea>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="clearTransform()">Очистить</button>
+      <button class="btn btn-primary" onclick="saveTransform()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast container -->
 <div id="toast" class="toast"></div>
 

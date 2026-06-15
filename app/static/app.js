@@ -63,11 +63,12 @@ async function scanFolder() {
 }
 
 // ── Field editor ───────────────────────────────────────────────────
-function _makeFieldRow(id, name, desc, multiMode, dbType, allowList, removeCallback) {
+function _makeFieldRow(id, name, desc, multiMode, dbType, allowList, removeCallback, transform = '') {
   const row = document.createElement('div');
   row.className = 'field-row';
   row.id = id;
   row.dataset.allowList = allowList ? '1' : '0';
+  row.dataset.transform = transform || '';
   row.innerHTML = `
     <input type="text" class="input fn" placeholder="Название поля"          value="${esc(name)}"/>
     <input type="text" class="input fd" placeholder="Описание / откуда брать" value="${esc(desc)}"/>
@@ -81,11 +82,19 @@ function _makeFieldRow(id, name, desc, multiMode, dbType, allowList, removeCallb
       <option value="integer"${dbType === 'integer' ? 'selected' : ''}>INTEGER</option>
       <option value="date"   ${dbType === 'date'    ? 'selected' : ''}>DATE</option>
     </select>
+    <button class="btn-icon fx" title="Функция проверки / форматирования">ƒ</button>
     <button class="btn-icon" title="Удалить">×</button>
   `;
   row.querySelector('.fn').addEventListener('input', checkStartEnabled);
-  row.querySelector('.btn-icon').addEventListener('click', removeCallback);
+  row.querySelector('.fx').addEventListener('click', () => openTransformEditor(row));
+  row.querySelector('.btn-icon:not(.fx)').addEventListener('click', removeCallback);
+  _refreshFxButton(row);
   return row;
+}
+
+function _refreshFxButton(row) {
+  const has = !!(row.dataset.transform || '').trim();
+  row.querySelector('.fx').classList.toggle('has-fn', has);
 }
 
 function _readFieldRow(r) {
@@ -95,13 +104,14 @@ function _readFieldRow(r) {
     multi_value_mode: r.querySelector('.fm').value,
     db_type:          r.querySelector('.ft').value,
     allow_list:       r.dataset.allowList === '1',
+    transform:        r.dataset.transform || '',
   };
 }
 
-function addField(name = '', desc = '', multiMode = 'rows', dbType = 'text', allowList = false) {
+function addField(name = '', desc = '', multiMode = 'rows', dbType = 'text', allowList = false, transform = '') {
   const id = ++_fieldCounter;
   const rowId = `fr-${id}`;
-  const row = _makeFieldRow(rowId, name, desc, multiMode, dbType, allowList, () => removeField(id));
+  const row = _makeFieldRow(rowId, name, desc, multiMode, dbType, allowList, () => removeField(id), transform);
   $('fields-list').appendChild(row);
   checkStartEnabled();
 }
@@ -143,6 +153,7 @@ function addSection(name = '', desc = '', fields = []) {
         <span>Описание / откуда брать</span>
         <span>Список →</span>
         <span>Тип в БД</span>
+        <span title="Функция">ƒ</span>
         <span></span>
       </div>
       <div class="section-fields-list" id="sfl-${secId}"></div>
@@ -154,7 +165,7 @@ function addSection(name = '', desc = '', fields = []) {
   block.querySelector('[data-sec]').addEventListener('click', () => addFieldToSection(secId));
   $('sections-list').appendChild(block);
 
-  fields.forEach(f => addFieldToSection(secId, f.name, f.description || '', f.multi_value_mode || 'rows', f.db_type || 'text', f.allow_list || false));
+  fields.forEach(f => addFieldToSection(secId, f.name, f.description || '', f.multi_value_mode || 'rows', f.db_type || 'text', f.allow_list || false, f.transform || ''));
   checkStartEnabled();
 }
 
@@ -165,7 +176,7 @@ function removeSection(secId) {
   checkStartEnabled();
 }
 
-function addFieldToSection(secId, name = '', desc = '', multiMode = 'rows', dbType = 'text', allowList = false) {
+function addFieldToSection(secId, name = '', desc = '', multiMode = 'rows', dbType = 'text', allowList = false, transform = '') {
   const cnt = ++_secFieldCounters[secId];
   const rowId = `sfr-${secId}-${cnt}`;
   const list = $(`sfl-${secId}`);
@@ -173,7 +184,7 @@ function addFieldToSection(secId, name = '', desc = '', multiMode = 'rows', dbTy
     const el = $(rowId);
     if (el) el.remove();
     checkStartEnabled();
-  });
+  }, transform);
   list.appendChild(row);
   checkStartEnabled();
 }
@@ -206,7 +217,7 @@ function toggleSectionsMode() {
     const allFields = getSections().flatMap(s => s.fields);
     $('fields-list').innerHTML = '';
     _fieldCounter = 0;
-    allFields.forEach(f => addField(f.name, f.description, f.multi_value_mode, f.db_type, f.allow_list));
+    allFields.forEach(f => addField(f.name, f.description, f.multi_value_mode, f.db_type, f.allow_list, f.transform));
     $('sections-list').innerHTML = '';
     _sectionCounter = 0;
     _secFieldCounters = {};
@@ -262,7 +273,7 @@ function loadPreset() {
     data.sections.forEach(s => addSection(s.name, s.description || '', s.fields || []));
   } else {
     if (S.sectionsMode) exitSectionsMode();
-    (data.fields || []).forEach(f => addField(f.name, f.description || '', f.multi_value_mode || 'rows', f.db_type || 'text', f.allow_list || false));
+    (data.fields || []).forEach(f => addField(f.name, f.description || '', f.multi_value_mode || 'rows', f.db_type || 'text', f.allow_list || false, f.transform || ''));
   }
   toast(`Пресет «${name}» загружен`);
 }
@@ -642,8 +653,39 @@ function fmtCell(val) {
   return esc(String(val));
 }
 
+// ── Transform (custom function) editor ─────────────────────────────
+let _transformRow = null;
+
+function openTransformEditor(row) {
+  _transformRow = row;
+  const name = row.querySelector('.fn').value.trim() || 'поле';
+  $('transform-field-name').textContent = name;
+  $('transform-code').value = row.dataset.transform || '';
+  show($('transform-modal'));
+  document.body.style.overflow = 'hidden';
+  $('transform-code').focus();
+}
+
+function closeTransformEditor() {
+  hide($('transform-modal'));
+  document.body.style.overflow = '';
+  _transformRow = null;
+}
+
+function saveTransform() {
+  if (_transformRow) {
+    _transformRow.dataset.transform = $('transform-code').value;
+    _refreshFxButton(_transformRow);
+  }
+  closeTransformEditor();
+}
+
+function clearTransform() {
+  $('transform-code').value = '';
+}
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closePreview();
+  if (e.key === 'Escape') { closePreview(); closeTransformEditor(); }
 });
 
 // ── Initialise ─────────────────────────────────────────────────────
